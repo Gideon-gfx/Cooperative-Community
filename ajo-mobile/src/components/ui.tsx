@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Modal as RNModal, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fonts, TAP } from '../theme';
 import { useLoader } from './GlobalLoader';
@@ -66,14 +66,19 @@ export function ProgressBar({ value, max, color = colors.orange }: { value: numb
   return <View style={s.track}><View style={{ width: `${pct}%`, height: '100%', backgroundColor: color }} /></View>;
 }
 
-export function Screen({ children, scroll = true, padded = true, loaderButtons = false }: { children: ReactNode; scroll?: boolean; padded?: boolean; loaderButtons?: boolean }) {
+export function Screen({ children, scroll = true, padded = true, loaderButtons = false, keyboardAvoiding = false }: { children: ReactNode; scroll?: boolean; padded?: boolean; loaderButtons?: boolean; keyboardAvoiding?: boolean }) {
   const inner = padded ? { padding: 16, gap: 14 } : undefined;
   const [locked, setLocked] = useState(false);
+  const content = scroll
+    ? <ScrollView contentContainerStyle={[inner, keyboardAvoiding ? { flexGrow: 1 } : undefined]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollEnabled={!locked}>{children}</ScrollView>
+    : <View style={[{ flex: 1 }, inner]}>{children}</View>;
   return (
     <ScrollLockContext.Provider value={setLocked}>
     <ButtonLoaderScope.Provider value={loaderButtons}>
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['bottom', 'left', 'right']}>
-      {scroll ? <ScrollView contentContainerStyle={inner} keyboardShouldPersistTaps="handled" scrollEnabled={!locked}>{children}</ScrollView> : <View style={[{ flex: 1 }, inner]}>{children}</View>}
+      {keyboardAvoiding
+        ? <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>{content}</KeyboardAvoidingView>
+        : content}
     </SafeAreaView>
     </ButtonLoaderScope.Provider>
     </ScrollLockContext.Provider>

@@ -6,7 +6,7 @@ export async function sendSms(to: string, message: string): Promise<void> {
   if (!config.termiiApiKey) throw new Error('TERMII_API_KEY is not configured');
   if (!config.termiiSenderId) throw new Error('TERMII_SENDER_ID is not configured');
 
-  await axios.post('https://api.ng.termii.com/api/sms/send', {
+  await axios.post(`${config.termiiBaseUrl}/api/sms/send`, {
     to: to.replace('+', ''),
     from: config.termiiSenderId,
     sms: message,

@@ -75,7 +75,7 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
   });
 
   return (
-    <Screen>
+    <Screen keyboardAvoiding>
       <Text style={[s.h1, { color: colors.primary, textAlign: 'center' }]}>ÀJỌ</Text>
       <Text style={[s.h2, { textAlign: 'center' }]}>{isSignup ? 'Create your account' : 'Log in'}</Text>
       <Card style={{ gap: 12 }}>

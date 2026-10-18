@@ -14,6 +14,7 @@
         "backgroundColor": "#FFF4E6",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
+      "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false
     },
     "web": {

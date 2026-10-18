@@ -51,7 +51,7 @@ export function RecoveryFlow({ kind }: { kind: 'password' | 'pin' }) {
   const idOk = isPin ? phone.replace(/\D/g, '').length >= 7 : /\S+@\S+\.\S+/.test(email);
 
   return (
-    <Screen>
+    <Screen keyboardAvoiding>
       <Text style={[s.h1, { color: colors.primary, textAlign: 'center' }]}>ÀJỌ</Text>
       <Text style={[s.h2, { textAlign: 'center' }]}>{isPin ? 'Reset your PIN' : 'Reset your password'}</Text>
       <ProgressBar value={step} max={3} color={colors.green} />

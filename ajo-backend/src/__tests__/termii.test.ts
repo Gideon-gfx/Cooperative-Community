@@ -42,7 +42,7 @@ describe('Termii SMS delivery', () => {
 
     await sendSms('+2348012345678', 'verification message');
 
-    expect(mockedAxios.post).toHaveBeenCalledWith('https://api.ng.termii.com/api/sms/send', {
+    expect(mockedAxios.post).toHaveBeenCalledWith(`${config.termiiBaseUrl}/api/sms/send`, {
       to: '2348012345678',
       from: 'AJOAPP',
       sms: 'verification message',

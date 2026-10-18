@@ -24,6 +24,7 @@ export const config = {
   smtpPass: process.env.SMTP_PASS || '',
   resendApiKey: process.env.RESEND_API_KEY || '',
   mailFrom: process.env.MAIL_FROM || '',
+  termiiBaseUrl: (process.env.TERMII_BASE_URL || 'https://api.ng.termii.com').replace(/\/$/, ''),
   termiiApiKey: process.env.TERMII_API_KEY || '',
   termiiSenderId: process.env.TERMII_SENDER_ID || '',
   termiiWebhookSecret: process.env.TERMII_WEBHOOK_SECRET || '',
