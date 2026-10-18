@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -25,6 +26,7 @@ import { ussdRouter } from './modules/ussd/ussd.router';
 import { UPLOAD_ROOT } from './services/storage.service';
 
 const app = express();
+const webRoot = path.resolve(__dirname, '../public');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } })); // uploaded files are loaded by the apps
 app.use('/files', express.static(UPLOAD_ROOT));
 app.use(cors());
@@ -46,7 +48,6 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.get('/health', (_req, res) => void res.json({ ok: true }));
-app.get('/', (_req, res) => void res.json({ status: 'ok', service: 'CC-ÀJỌ API' }));
 app.use('/api/auth', authRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/ajo', ajoRouter);
@@ -67,6 +68,15 @@ app.use('/api/agent', agentRouter);
 app.use('/api/disputes', disputesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api', ussdRouter); // /api/ussd and /api/sms/inbound (provider webhooks)
+app.use(express.static(webRoot, { index: false }));
+app.get('/{*path}', (req, res, next) => {
+  if (req.path === '/api' || req.path.startsWith('/api/') || req.path === '/files' || req.path.startsWith('/files/')) {
+    return next();
+  }
+  res.sendFile(path.join(webRoot, 'index.html'), (error) => {
+    if (error) next(error);
+  });
+});
 app.use(errorHandler);
 
 

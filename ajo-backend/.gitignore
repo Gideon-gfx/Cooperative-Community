@@ -2,6 +2,7 @@ node_modules
 dist
 .env
 /uploads/
+/public/
 .mongo-data/
 
 records-vault/
