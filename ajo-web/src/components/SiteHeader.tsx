@@ -3,6 +3,7 @@ import { ArrowRight, Menu, X } from 'lucide-react';
 
 const navLinks = [
   { label: 'About', href: '#about' },
+  { label: 'What you can do', href: '#services' },
   { label: 'How it works', href: '#how-it-works' },
   { label: 'Trust & transparency', href: '#trust' },
 ];
