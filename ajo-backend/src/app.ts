@@ -46,6 +46,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.get('/health', (_req, res) => void res.json({ ok: true }));
+app.get('/', (_req, res) => void res.json({ status: 'ok', service: 'CC-ÀJỌ API' }));
 app.use('/api/auth', authRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/ajo', ajoRouter);
