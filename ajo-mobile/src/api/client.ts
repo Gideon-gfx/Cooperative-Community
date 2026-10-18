@@ -5,11 +5,15 @@ import * as SecureStore from 'expo-secure-store';
 export const TOKEN_KEY = 'ajo_token';
 export const USER_KEY = 'ajo_user';
 
-/** EXPO_PUBLIC_API_URL wins; otherwise reuse the LAN IP Expo Go is loading the bundle from. */
+/** Explicit env/config wins; use the Expo LAN host only during development. */
 function resolveBaseUrl(): string {
-  if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
-  const host = Constants.expoConfig?.hostUri?.split(':')[0];
-  return `http://${host ?? 'localhost'}:4000/api`;
+  const configuredUrl = process.env.EXPO_PUBLIC_API_URL ?? Constants.expoConfig?.extra?.apiUrl;
+  if (configuredUrl) return configuredUrl.replace(/\/+$/, '');
+  if (__DEV__) {
+    const host = Constants.expoConfig?.hostUri?.split(':')[0] ?? 'localhost';
+    return `http://${host}:4000/api`;
+  }
+  throw new Error('Production API URL is not configured. Set EXPO_PUBLIC_API_URL or expo.extra.apiUrl.');
 }
 
 export const API_URL = resolveBaseUrl();

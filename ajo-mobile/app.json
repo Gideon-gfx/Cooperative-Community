@@ -55,7 +55,8 @@
       "router": {},
       "eas": {
         "projectId": "94df5968-600c-4129-b5b4-2c3e222e4903"
-      }
+      },
+      "apiUrl": "https://theccajo.com/api"
     },
     "owner": "gideon-gfx"
   }
