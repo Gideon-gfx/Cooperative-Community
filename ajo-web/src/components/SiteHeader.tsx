@@ -24,14 +24,17 @@ export default function SiteHeader({ homePath = '' }: { homePath?: string }) {
 
   return (
     <header className="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-12">
-      <a href={homeHref} className="flex items-center gap-3" aria-label="CC-ÀJỌ home">
+      <a href={homeHref} className="flex items-center gap-3" aria-label="CC-ÀJỌ Co-operative Community home">
         <img
           className="h-11 w-11 rounded-xl"
           src="/ajo-logo.png"
           alt=""
           aria-hidden="true"
         />
-        <span className="text-xl font-extrabold tracking-tight text-cocoa">CC-ÀJỌ</span>
+        <span className="flex flex-col">
+          <span className="text-xl font-extrabold leading-tight tracking-tight text-cocoa">CC-ÀJỌ</span>
+          <span className="text-[10px] font-semibold leading-tight tracking-wide text-cocoa-muted">Co-operative Community</span>
+        </span>
       </a>
       <nav className="hidden items-center gap-8 text-sm font-semibold text-cocoa-muted min-[813px]:flex">
         {navLinks.map(({ label, href }) => (
@@ -65,9 +68,12 @@ export default function SiteHeader({ homePath = '' }: { homePath?: string }) {
           aria-label="Main navigation"
         >
           <div className="flex items-center justify-between">
-            <a href={homeHref} className="inline-flex items-center gap-3" onClick={() => setMenuOpen(false)}>
+            <a href={homeHref} className="inline-flex items-center gap-3" aria-label="CC-ÀJỌ Co-operative Community home" onClick={() => setMenuOpen(false)}>
               <img className="h-11 w-11 rounded-xl" src="/ajo-logo.png" alt="" aria-hidden="true" />
-              <span className="text-xl font-extrabold tracking-tight text-cocoa">CC-ÀJỌ</span>
+              <span className="flex flex-col">
+                <span className="text-xl font-extrabold leading-tight tracking-tight text-cocoa">CC-ÀJỌ</span>
+                <span className="text-[10px] font-semibold leading-tight tracking-wide text-cocoa-muted">Co-operative Community</span>
+              </span>
             </a>
             <button
               type="button"
