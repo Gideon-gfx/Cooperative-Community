@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import { naira, safeSms } from '../lib/notify';
 import { sendEmail } from '../lib/mailer';
+import { safePush } from '../services/push.service';
 import { t, type Lang } from '../lib/i18n';
 import { DAY_MS } from '../modules/ajo/ajo.logic';
 import { buildDigests, flagDefaulter } from '../modules/ajo/ajo.service';
@@ -37,6 +38,11 @@ export async function sendDueReminders(now = new Date()) {
         const remaining = c.amount - c.paidAmount - pending;
         if (remaining <= 0) continue;
         await safeSms(c.contributor.phoneNumber, t(c.contributor.preferredLanguage as Lang, key, { amount: naira(remaining, c.ajoPool.group.currency), recipient: c.schedule.recipient.fullName }));
+        await safePush(c.contributorId, {
+          title: offset === 2 ? 'Contribution due soon' : 'Contribution due today',
+          body: 'You have an ÀJỌ contribution to review. Open the app for details.',
+          data: { kind: 'DUE', poolId: c.ajoPoolId },
+        });
       }
     }
   }
@@ -75,5 +81,4 @@ export async function sendWeeklyDigest() {
     if (email) await sendEmail(email, 'Your ÀJỌ weekly update', body);
   }
 }
-
 

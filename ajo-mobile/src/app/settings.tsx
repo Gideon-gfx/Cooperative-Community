@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Text } from 'react-native';
+import { Linking, Platform, Text } from 'react-native';
 import { Alert } from '../components/feedback';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
@@ -10,6 +10,7 @@ import { LANGS, type Lang } from '../i18n';
 import { Button, Card, Screen, s } from '../components/ui';
 import { LegalLinks } from '../components/LegalLinks';
 import { Chips, Field, TrustBadge, type Trust } from '../components/widgets';
+import { registerIosPushNotifications } from '../notifications/push';
 
 const HOURS = [6, 8, 10, 12, 16, 18, 20].map((h) => ({ value: String(h), label: `${h}:00` }));
 
@@ -21,6 +22,7 @@ export default function Settings() {
   const [pin, setPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
   const [busy, setBusy] = useState(false);
+  const [notificationsBusy, setNotificationsBusy] = useState(false);
   const profile = useQuery({ queryKey: ['profile'], queryFn: async () => (await api.get<{ user: { hasPin: boolean }; trust: Trust; collector: { verified: boolean; groups: number; completedPayouts: number; confirmedPayouts: number } | null }>('/auth/profile')).data });
 
   const patch = async (body: Record<string, unknown>) => {
@@ -50,6 +52,19 @@ export default function Settings() {
     Alert.alert('Saved', 'Your location was saved.');
   };
 
+  const enableNotifications = async () => {
+    setNotificationsBusy(true);
+    try {
+      const token = await registerIosPushNotifications();
+      if (token) Alert.alert('Notifications enabled', 'ÀJỌ can now send payment and payout alerts to this iPhone.');
+      else Alert.alert('Notifications are off', 'Allow ÀJỌ notifications in iPhone Settings to receive payment and payout alerts.');
+    } catch (error) {
+      Alert.alert('Could not enable notifications', error instanceof Error ? error.message : errMsg(error));
+    } finally {
+      setNotificationsBusy(false);
+    }
+  };
+
   const hasPin = profile.data?.user.hasPin ?? user?.hasPin;
   const needsLocation = user?.role === 'COLLECTOR' || user?.role === 'TRANSPORTER';
 
@@ -69,6 +84,15 @@ export default function Settings() {
         <Text style={s.h3}>{t('reminderHour')}</Text>
         <Chips value={String(user?.reminderHour ?? 8)} onChange={(v) => patch({ reminderHour: Number(v) })} options={HOURS} />
       </Card>
+
+      {Platform.OS === 'ios' && (
+        <Card style={{ gap: 8 }}>
+          <Text style={s.h3}>🔔 Notifications</Text>
+          <Text style={s.muted}>Receive payment-due, missed-payment, payout and payment-verification alerts on this iPhone.</Text>
+          <Button title="Enable iOS notifications" variant="outline" onPress={enableNotifications} loading={notificationsBusy} />
+          <Button title="Open iPhone notification settings" variant="outline" onPress={() => Linking.openSettings()} />
+        </Card>
+      )}
 
       <Card style={{ gap: 10 }}>
         <Text style={s.h3}>🔒 {t('setPin')}</Text>

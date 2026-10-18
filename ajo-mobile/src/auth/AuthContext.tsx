@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { setToken, setUnauthorizedHandler, TOKEN_KEY, USER_KEY } from '../api/client';
 import { translate, type Lang } from '../i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { unregisterPushNotifications } from '../notifications/push';
 
 const GUEST_LANG_KEY = 'ajo_guest_lang';
 
@@ -43,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    await unregisterPushNotifications();
     await Promise.all([SecureStore.deleteItemAsync(TOKEN_KEY), SecureStore.deleteItemAsync(USER_KEY)]);
     setToken(null);
     setUser(null);

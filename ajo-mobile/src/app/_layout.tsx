@@ -1,5 +1,6 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
@@ -14,7 +15,9 @@ import { FeedbackHost } from '../components/feedback';
 import { LoaderProvider } from '../components/GlobalLoader';
 import { OfflineBanner } from '../components/widgets';
 import { useOutboxFlusher } from '../offline';
+import '../notifications/push';
 import { colors, fonts } from '../theme';
+import { useEffect } from 'react';
 
 // Screens are cached on the phone for a day, so schedules and balances still open without network.
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, gcTime: 24 * 3600 * 1000, networkMode: 'offlineFirst' } } });
@@ -32,7 +35,19 @@ function BrandSplash() {
 function Routes() {
   const { user, ready, t } = useAuth();
   const qc = useQueryClient();
+  const router = useRouter();
+  const lastNotificationResponse = Notifications.useLastNotificationResponse();
   useOutboxFlusher(!!user, () => qc.invalidateQueries());
+
+  useEffect(() => {
+    if (!lastNotificationResponse || !ready) return;
+    const poolId = lastNotificationResponse.notification.request.content.data?.poolId;
+    if (user && typeof poolId === 'string') router.push(`/ajo/${encodeURIComponent(poolId)}`);
+    void Notifications.clearLastNotificationResponseAsync().catch((error) => {
+      console.error('[notifications] Could not clear the handled notification response:', error);
+    });
+  }, [lastNotificationResponse, ready, router, user]);
+
   const [fontsReady] = useFonts({ Unbounded_700Bold, Unbounded_800ExtraBold, PlusJakartaSans_500Medium, PlusJakartaSans_700Bold, JetBrainsMono_700Bold });
   if (!ready || !fontsReady) return <BrandSplash />;
   const head = { headerStyle: { backgroundColor: colors.cocoaNight }, headerTintColor: colors.cream, headerTitleStyle: { fontFamily: fonts.display, fontSize: 16 } };

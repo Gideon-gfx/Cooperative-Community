@@ -196,6 +196,7 @@ model User {
 
   createdByAgent     User?                 @relation("AgentCreated", fields: [createdByAgentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   agentCreated       User[]                @relation("AgentCreated")
+  pushTokens         PushToken[]
   adminGroups        CommunityGroup[]      @relation("GroupAdmin")
   memberships        GroupMember[]
   messages           GroupMessage[]
@@ -206,6 +207,18 @@ model User {
   ccgbVotes          FoodPollVote[]
   ccgbSupplier       CcgbSupplier?
   transportJobs      FoodPool[]            @relation("PoolDriver")
+}
+
+model PushToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  token     String   @unique
+  userId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model OtpCode {

@@ -24,6 +24,7 @@ import { feesRouter, paymentsRouter } from './modules/payments/payments.router';
 import { campaignsRouter } from './modules/campaigns/campaigns.router';
 import { ussdRouter } from './modules/ussd/ussd.router';
 import { termiiRouter } from './modules/termii/termii.router';
+import { pushRouter } from './modules/push/push.router';
 import { UPLOAD_ROOT } from './services/storage.service';
 
 const app = express();
@@ -69,6 +70,7 @@ app.use('/api/uploads', uploadRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/disputes', disputesRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/push', pushRouter);
 app.use('/api', ussdRouter); // /api/ussd and /api/sms/inbound (provider webhooks)
 app.use(express.static(webRoot, { index: false }));
 app.get('/{*path}', (req, res, next) => {

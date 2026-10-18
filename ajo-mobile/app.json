@@ -7,6 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
+      "bundleIdentifier": "com.cooperativecommunity.ajo",
       "supportsTablet": true
     },
     "android": {
@@ -23,6 +24,7 @@
     "plugins": [
       "expo-secure-store",
       "expo-router",
+      "expo-notifications",
       [
         "expo-image-picker",
         {

@@ -20,6 +20,21 @@ cd ajo-mobile && npx expo start --port 8082   # scan with Expo Go (same Wi‑Fi)
 ```
 Without `TERMII_API_KEY`, SMS texts (including OTP codes) are printed in the backend terminal.
 
+## iOS push notifications
+The iOS app uses bundle ID `com.cooperativecommunity.ajo`. Push notifications are opt-in from **Settings** and cover
+due and missed contributions, payout confirmations, payouts ready to record, and member payments awaiting verification.
+The backend stores each signed-in device's Expo push token and removes tokens reported as unregistered by Expo.
+
+Remote pushes do not work in Expo Go. From `ajo-mobile`, link the app to an Expo account/project and create a development
+build on a physical iPhone:
+```
+npx eas-cli@latest init
+npx eas-cli@latest build --platform ios --profile development
+```
+`eas init` adds the required `extra.eas.projectId` to `app.json`. EAS Build also needs an Apple Developer account and
+APNs push credentials; EAS can manage those credentials during the build. Use that development build (not Expo Go) to
+test notifications. The device must be signed in, opt in on the Settings screen, and be able to reach the backend API.
+
 The web and mobile apps support phone sign-in with an SMS code or PIN, and email-address/password registration and sign-in (passwords must be at least 8 characters). Email accounts do not require a phone number; phone-based SMS and USSD features need one. Email/password sign-in does not verify ownership of the email inbox and is not Google OAuth.
 
 ## Tests
