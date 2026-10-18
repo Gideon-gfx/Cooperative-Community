@@ -8,15 +8,22 @@
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "com.cooperativecommunity.ajo",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.cooperativecommunity.ajo",
       "adaptiveIcon": {
         "backgroundColor": "#FFF4E6",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "softwareKeyboardLayoutMode": "resize",
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -43,6 +50,13 @@
       ],
       "expo-sharing"
     ],
-    "scheme": "ajo"
+    "scheme": "ajo",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "94df5968-600c-4129-b5b4-2c3e222e4903"
+      }
+    },
+    "owner": "gideon-gfx"
   }
 }
