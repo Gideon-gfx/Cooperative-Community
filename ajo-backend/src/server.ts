@@ -7,7 +7,7 @@ import { registerTrustListeners } from './modules/trust/trust.service';
 import { seedPlanPrices } from './modules/billing/billing.service';
 import { seedConsentDocuments } from './modules/consent/consent.service';
 
-app.listen(config.port, () => {
+app.listen(config.port, '0.0.0.0', () => {
   console.log(`ÀJỌ API listening on :${config.port}`);
   logLaunchGates();
   ensureEmailUniqueIndex().catch((e) => console.error('[db] could not make the email/phone indexes', (e as Error).message));
