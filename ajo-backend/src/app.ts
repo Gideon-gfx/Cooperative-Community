@@ -23,6 +23,7 @@ import { ledgerRouter } from './modules/ledger/ledger.router';
 import { feesRouter, paymentsRouter } from './modules/payments/payments.router';
 import { campaignsRouter } from './modules/campaigns/campaigns.router';
 import { ussdRouter } from './modules/ussd/ussd.router';
+import { termiiRouter } from './modules/termii/termii.router';
 import { UPLOAD_ROOT } from './services/storage.service';
 
 const app = express();
@@ -48,6 +49,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.get('/health', (_req, res) => void res.json({ ok: true }));
+app.use('/webhook', termiiRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/ajo', ajoRouter);

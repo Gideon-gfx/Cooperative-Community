@@ -8,6 +8,7 @@ import { config } from '../../lib/config';
 import { HttpError } from '../../lib/errors';
 import { COUNTRIES, normalizePhone } from '../../lib/phone';
 import { safeSms } from '../../lib/notify';
+import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
 import { audit } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
@@ -21,6 +22,15 @@ const OTP_RESEND_MS = 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 
 const hashOtp = (phone: string, otp: string) => crypto.createHash('sha256').update(`${phone}:${otp}:${config.jwtSecret}`).digest('hex');
+
+async function sendAuthSms(to: string, message: string): Promise<void> {
+  try {
+    await sendSms(to, message);
+  } catch (error) {
+    console.error('[auth] Termii SMS delivery failed:', error instanceof Error ? error.message : 'Unknown error');
+    throw new HttpError(503, 'We could not send an SMS code right now. Please try again later.');
+  }
+}
 
 /** Never send pinHash to a client. */
 export function publicUser(u: User) {
@@ -190,7 +200,12 @@ authRouter.post('/forgot-pin', async (req, res) => {
       const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
       const data = { codeHash: resetHash(user.id, code), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
       await prisma.passwordResetCode.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data });
-      await safeSms(phone, `Your ÀJỌ PIN reset code is ${code}. It expires in 10 minutes. Never share it.`);
+      try {
+        await sendAuthSms(phone, `Your ÀJỌ PIN reset code is ${code}. It expires in 10 minutes. Never share it.`);
+      } catch (error) {
+        await prisma.passwordResetCode.deleteMany({ where: { userId: user.id, codeHash: data.codeHash } });
+        throw error;
+      }
       await audit(user.id, 'PIN_RESET_REQUESTED', 'User', user.id);
     }
   }
@@ -216,7 +231,12 @@ authRouter.post('/request-otp', async (req, res) => {
   const otp = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
   const data = { codeHash: hashOtp(phone, otp), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
   await prisma.otpCode.upsert({ where: { phoneNumber: phone }, create: { phoneNumber: phone, ...data }, update: data });
-  await safeSms(phone, `Your ÀJỌ verification code is ${otp}. It expires in 10 minutes. Never share it.`);
+  try {
+    await sendAuthSms(phone, `Your ÀJỌ verification code is ${otp}. It expires in 10 minutes. Never share it.`);
+  } catch (error) {
+    await prisma.otpCode.deleteMany({ where: { phoneNumber: phone, codeHash: data.codeHash } });
+    throw error;
+  }
   res.json({ success: true });
 });
 

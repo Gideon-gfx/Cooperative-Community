@@ -8,6 +8,7 @@ import { api, errMsg } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { LANGS, type Lang } from '../i18n';
 import { Button, Card, Screen, s } from '../components/ui';
+import { LegalLinks } from '../components/LegalLinks';
 import { Chips, Field, TrustBadge, type Trust } from '../components/widgets';
 
 const HOURS = [6, 8, 10, 12, 16, 18, 20].map((h) => ({ value: String(h), label: `${h}:00` }));
@@ -86,6 +87,7 @@ export default function Settings() {
       )}
 
       <Button title={t('logout')} variant="danger" onPress={async () => { await logout(); router.replace('/'); }} />
+      <LegalLinks />
     </Screen>
   );
 }

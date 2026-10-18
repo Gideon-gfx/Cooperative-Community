@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { Image, Text, View } from 'react-native';
+import { Image, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Unbounded_700Bold, Unbounded_800ExtraBold } from '@expo-google-fonts/unbounded';
 import { PlusJakartaSans_500Medium, PlusJakartaSans_700Bold } from '@expo-google-fonts/plus-jakarta-sans';
@@ -24,8 +24,7 @@ const persister = createAsyncStoragePersister({ storage: AsyncStorage, key: 'ajo
 function BrandSplash() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' }}>
-      <Image source={require('../../assets/splash-icon.png')} style={{ width: 220, height: 220 }} resizeMode="contain" />
-      <Text style={{ marginTop: 16, fontSize: 32, fontWeight: '900', color: colors.cocoa }}>CC-ÀJỌ</Text>
+      <Image source={require('../../assets/splash-logo.jpg')} style={{ width: 320, height: 359 }} resizeMode="contain" />
     </View>
   );
 }

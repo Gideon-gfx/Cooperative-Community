@@ -25,6 +25,8 @@ export const config = {
   resendApiKey: process.env.RESEND_API_KEY || '',
   mailFrom: process.env.MAIL_FROM || '',
   termiiApiKey: process.env.TERMII_API_KEY || '',
+  termiiSenderId: process.env.TERMII_SENDER_ID || '',
+  termiiWebhookSecret: process.env.TERMII_WEBHOOK_SECRET || '',
   // Shared secret for USSD / inbound-SMS webhooks (sent as ?key=... or x-webhook-key header)
   webhookSecret: process.env.WEBHOOK_SECRET || '',
   ussdShortCode: process.env.USSD_SHORT_CODE || '*384*00#',

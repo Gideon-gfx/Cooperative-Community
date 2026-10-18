@@ -5,6 +5,7 @@ import { Alert } from './feedback';
 import { api, errMsg } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { Button, Card, LinkText, Screen, s } from './ui';
+import { LegalLinks } from './LegalLinks';
 import { useLoader } from './GlobalLoader';
 import { Dropdown, Field, PhoneField } from './widgets';
 import { colors } from '../theme';
@@ -140,6 +141,7 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
         {isSignup && <LinkText onPress={() => { setMode(mode === 'email' ? 'otp' : 'email'); setSentTo(false); }}>{mode === 'email' ? 'Use phone number instead' : 'Use email instead'}</LinkText>}
       </Card>
       <LinkText onPress={() => router.push(isSignup ? '/login' : '/signup')}>{isSignup ? 'Already have an account? Log in' : "Don't have an account? Create one"}</LinkText>
+      <LegalLinks />
     </Screen>
   );
 }
