@@ -7,6 +7,10 @@ import GroupChat from './pages/GroupChat';
 import AjoPool from './pages/AjoPool';
 import FoodPool from './pages/FoodPool';
 import Dashboard from './pages/Dashboard';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfUse from './pages/TermsOfUse';
+import DeleteAccount from './pages/DeleteAccount';
+import CookieNotice from './components/CookieNotice';
 
 function Protected({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -15,14 +19,20 @@ function Protected({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/auth" element={<AuthPage />} />
-      <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
-      <Route path="/groups/:id" element={<Protected><GroupChat /></Protected>} />
-      <Route path="/ajo/:poolId" element={<Protected><AjoPool /></Protected>} />
-      <Route path="/food/:poolId" element={<Protected><FoodPool /></Protected>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms-of-use" element={<TermsOfUse />} />
+        <Route path="/delete-account" element={<DeleteAccount />} />
+        <Route path="/auth" element={<AuthPage />} />
+        <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+        <Route path="/groups/:id" element={<Protected><GroupChat /></Protected>} />
+        <Route path="/ajo/:poolId" element={<Protected><AjoPool /></Protected>} />
+        <Route path="/food/:poolId" element={<Protected><FoodPool /></Protected>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <CookieNotice />
+    </>
   );
 }

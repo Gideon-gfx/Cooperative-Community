@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { Text, View } from 'react-native';
+import { Image, Text, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Unbounded_700Bold, Unbounded_800ExtraBold } from '@expo-google-fonts/unbounded';
 import { PlusJakartaSans_500Medium, PlusJakartaSans_700Bold } from '@expo-google-fonts/plus-jakarta-sans';
@@ -23,8 +23,9 @@ const persister = createAsyncStoragePersister({ storage: AsyncStorage, key: 'ajo
 // Shown while the saved login and fonts load, so the first thing in the app is the CC-ÀJỌ wordmark.
 function BrandSplash() {
   return (
-    <View style={{ flex: 1, backgroundColor: colors.cocoaNight, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontSize: 44, fontWeight: '900', color: colors.gold }}>CC-<Text style={{ color: colors.orange }}>ÀJỌ</Text></Text>
+    <View style={{ flex: 1, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' }}>
+      <Image source={require('../../assets/splash-icon.png')} style={{ width: 220, height: 220 }} resizeMode="contain" />
+      <Text style={{ marginTop: 16, fontSize: 32, fontWeight: '900', color: colors.cocoa }}>CC-ÀJỌ</Text>
     </View>
   );
 }

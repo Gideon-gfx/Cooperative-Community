@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://theccajo.com/sitemap.xml
