@@ -1,0 +1,1806 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ── ENUMS ──────────────────────────────────
+
+enum UserRole {
+  MEMBER
+  COLLECTOR
+  TRANSPORTER
+  ADMIN
+  // Igba Boyi apprenticeship module
+  TRADE_MASTER
+  GUARANTOR
+  BOARD_MEMBER
+  FACILITATOR
+}
+
+enum MemberStatus {
+  CLEAN
+  WARNED
+  DEFAULTER
+}
+
+enum CycleFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum AjoPoolStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContributionStatus {
+  PENDING
+  VERIFIED
+  LATE
+  MISSED
+}
+
+// READY = every contribution verified, waiting for the collector to pay the recipient and record it.
+enum PayoutStatus {
+  SCHEDULED
+  READY
+  COMPLETED
+  DISPUTED
+}
+
+enum PaymentMethod {
+  TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum LedgerDirection {
+  IN
+  OUT
+}
+
+enum LedgerType {
+  CONTRIBUTION
+  PAYOUT
+  COLLECTOR_FEE
+  FINE_COLLECTED
+  EXPENSE
+  ADJUSTMENT
+  FOOD_PAYMENT
+  REFUND
+  SUPPLIER_PAYMENT
+  DRIVER_PAYMENT
+}
+
+enum DisputeStatus {
+  OPEN
+  ESCALATED
+  RESOLVED
+}
+
+enum SwapStatus {
+  PENDING_PEER
+  PENDING_COLLECTOR
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum Language {
+  EN
+  PCM
+  YO
+  HA
+  IG
+}
+
+enum AccountType {
+  SELF
+  ASSISTED
+}
+
+enum PollStatus {
+  OPEN
+  CLOSED
+}
+
+enum FoodPoolStatus {
+  COLLECTING
+  LOCKED
+  DISPATCHED
+  DELIVERED
+  DISSOLVED
+}
+
+enum CampaignKind {
+  ASO_EBI
+  HELP
+  // Any other group collection: a community project, a festival, church dues…
+  OTHER
+}
+
+enum CampaignStatus {
+  OPEN
+  CLOSED
+  COMPLETED
+  CANCELLED
+}
+
+enum GiftKind {
+  MONEY
+  FOOD
+}
+
+enum SupplierType {
+  FACTORY
+  LARGE_WHOLESALER
+  FARMER
+}
+
+enum FoodPaymentKind {
+  SUPPLIER_DEPOSIT
+  SUPPLIER_BALANCE
+  DRIVER_FEE
+  REFUND
+}
+
+// ── USERS ──────────────────────────────────
+
+model User {
+  id                String       @id @default(auto()) @map("_id") @db.ObjectId
+  phoneNumber       String?      @unique
+  email             String?
+  fullName          String
+  role              UserRole     @default(MEMBER)
+  memberStatus      MemberStatus @default(CLEAN)
+  // DEPRECATED: never written. Balances are derived by summing CONFIRMED FundsEntry rows.
+  walletBalance     Float        @default(0.00)
+  dateOfBirth       DateTime?
+  // Personal referral code (unique among people who have one: partial index made in lib/prisma.ts) and who brought this person in
+  referralCode      String?
+  referredById      String?      @db.ObjectId
+  bankAccountNo     String?
+  bankCode          String?
+  locationLat       Float?
+  locationLng       Float?
+  locationLabel     String?
+  isVerified        Boolean      @default(false)
+  // Set by a platform admin: lets a COLLECTOR create groups and shows the "verified collector" badge.
+  collectorApproved Boolean      @default(false)
+  country           String       @default("NG")
+  preferredLanguage Language     @default(EN)
+  reminderHour      Int          @default(8)
+  // Security
+  pinHash           String?
+  passwordHash      String?
+  pinMustChange     Boolean      @default(false)
+  pinFailedCount    Int          @default(0)
+  pinLockedUntil    DateTime?
+  // Collector-created ("assisted") accounts for people without smartphones
+  accountType       AccountType  @default(SELF)
+  createdByAgentId  String?      @db.ObjectId
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  createdByAgent     User?                 @relation("AgentCreated", fields: [createdByAgentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  agentCreated       User[]                @relation("AgentCreated")
+  adminGroups        CommunityGroup[]      @relation("GroupAdmin")
+  memberships        GroupMember[]
+  messages           GroupMessage[]
+  ajoContributions   AjoContribution[]
+  ajoPayoutRecipient AjoRotationSchedule[]
+  pollVotes          PollVote[]
+  ccgbMemberships    FoodPoolMember[]
+  ccgbVotes          FoodPollVote[]
+  ccgbSupplier       CcgbSupplier?
+  transportJobs      FoodPool[]            @relation("PoolDriver")
+}
+
+model OtpCode {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  phoneNumber String   @unique
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// One live password-reset code per account, hashed, short-lived, limited tries.
+model PasswordResetCode {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @unique @db.ObjectId
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  actorId   String?  @db.ObjectId
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+// ── COMMUNITY GROUPS ────────────────────────
+
+model CommunityGroup {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  adminId     String   @db.ObjectId
+  avatarUrl   String?
+  country     String   @default("NG")
+  currency    String   @default("NGN")
+  // ESCROW (default): contributions go through Monnify. COLLECTOR_CUSTODY (opt-in): members pay the collector's bank account directly.
+  // A group is never mixed-mode. A requested switch (pendingFundsMode) only takes effect at the start of the next cycle.
+  fundsMode            FundsMode          @default(ESCROW)
+  fundsModeLockedUntil DateTime?
+  pendingFundsMode     FundsMode?
+  registrationStatus   RegistrationStatus @default(UNREGISTERED)
+  // The community's Trust Board. A group with none falls back to the platform-wide board.
+  trustBoardId         String?            @db.ObjectId
+  createdAt   DateTime @default(now())
+
+  admin     User           @relation("GroupAdmin", fields: [adminId], references: [id])
+  members   GroupMember[]
+  messages  GroupMessage[]
+  polls     GroupPoll[]
+  ajoPools  AjoPool[]
+  foodPools FoodPool[]
+}
+
+model GroupMember {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  groupId  String   @db.ObjectId
+  userId   String   @db.ObjectId
+  joinedAt DateTime @default(now())
+
+  group CommunityGroup @relation(fields: [groupId], references: [id])
+  user  User           @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+}
+
+model GroupMessage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  groupId     String   @db.ObjectId
+  senderId    String?  @db.ObjectId
+  content     String?
+  audioUrl    String?
+  messageType String   @default("TEXT")
+  // messageType: TEXT | AUDIO | RECEIPT | POLL | SYSTEM
+  // refId: RECEIPT -> scheduleId, POLL -> pollId
+  refId       String?
+  createdAt   DateTime @default(now())
+
+  group  CommunityGroup @relation(fields: [groupId], references: [id])
+  sender User?          @relation(fields: [senderId], references: [id])
+
+  @@index([groupId, createdAt])
+}
+
+// ── POLLS ──────────────────────────────────
+
+model GroupPoll {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  groupId   String     @db.ObjectId
+  title     String
+  pollType  String
+  status    PollStatus @default(OPEN)
+  closesAt  DateTime?
+  createdAt DateTime   @default(now())
+
+  group   CommunityGroup @relation(fields: [groupId], references: [id])
+  options PollOption[]
+  votes   PollVote[]
+}
+
+model PollOption {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  pollId String @db.ObjectId
+  label  String
+  value  String
+
+  poll  GroupPoll  @relation(fields: [pollId], references: [id])
+  votes PollVote[]
+}
+
+model PollVote {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  pollId       String   @db.ObjectId
+  pollOptionId String   @db.ObjectId
+  userId       String   @db.ObjectId
+  createdAt    DateTime @default(now())
+
+  poll   GroupPoll  @relation(fields: [pollId], references: [id])
+  option PollOption @relation(fields: [pollOptionId], references: [id])
+  user   User       @relation(fields: [userId], references: [id])
+
+  @@unique([pollId, userId])
+}
+
+// ── MONEY ENGINE: ÀJỌ ROTATIONAL ───────────
+// The collector (Baba Àlàjọ) holds the money. The platform only records, verifies and shows it.
+
+model AjoPool {
+  id                String         @id @default(auto()) @map("_id") @db.ObjectId
+  groupId           String         @db.ObjectId
+  title             String
+  amountPerMember   Float
+  cycleFrequency    CycleFrequency
+  collectorFeePct   Float          @default(2.00)
+  // Informational only: the platform does not take a cut of money it never holds.
+  platformFeePct    Float          @default(0.00)
+  status            AjoPoolStatus  @default(ACTIVE)
+  currentCycleIndex Int            @default(0)
+  totalMembers      Int
+  startDate         DateTime
+  rulesText         String?
+  lateFeeAmount     Float          @default(0.00)
+  graceDays         Int            @default(1)
+  createdAt         DateTime       @default(now())
+
+  group         CommunityGroup        @relation(fields: [groupId], references: [id])
+  schedules     AjoRotationSchedule[]
+  contributions AjoContribution[]
+}
+
+model AjoRotationSchedule {
+  id                   String        @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId            String        @db.ObjectId
+  recipientId          String        @db.ObjectId
+  payoutOrder          Int
+  payoutDate           DateTime
+  totalCollected       Float         @default(0.00)
+  platformFee          Float         @default(0.00)
+  collectorFee         Float         @default(0.00)
+  netPayout            Float         @default(0.00)
+  status               PayoutStatus  @default(SCHEDULED)
+  receiptUrl           String?
+  // How the collector says they paid the recipient
+  payoutMethod         PaymentMethod?
+  payoutRef            String?
+  payoutProofUrl       String?
+  paidOutAt            DateTime?
+  recipientConfirmedAt DateTime?
+  createdAt            DateTime      @default(now())
+
+  ajoPool       AjoPool           @relation(fields: [ajoPoolId], references: [id])
+  recipient     User              @relation(fields: [recipientId], references: [id])
+  contributions AjoContribution[]
+}
+
+model AjoContribution {
+  id            String             @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId     String             @db.ObjectId
+  scheduleId    String             @db.ObjectId
+  contributorId String             @db.ObjectId
+  // Amount due. Members may pay in several instalments; paidAmount is the verified total.
+  amount        Float
+  paidAmount    Float              @default(0)
+  fineAmount    Float              @default(0)
+  status        ContributionStatus @default(PENDING)
+  wasLate       Boolean            @default(false)
+  // The collector paid this share from their own pocket because the member did not
+  coveredByCollector Boolean       @default(false)
+  verifiedAt    DateTime?
+  dueAt         DateTime
+  createdAt     DateTime           @default(now())
+
+  ajoPool     AjoPool             @relation(fields: [ajoPoolId], references: [id])
+  schedule    AjoRotationSchedule @relation(fields: [scheduleId], references: [id])
+  contributor User                @relation(fields: [contributorId], references: [id])
+  payments    ContributionPayment[]
+
+  @@unique([scheduleId, contributorId])
+}
+
+model ContributionPayment {
+  id             String        @id @default(auto()) @map("_id") @db.ObjectId
+  contributionId String        @db.ObjectId
+  ajoPoolId      String        @db.ObjectId
+  amount         Float
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  proofUrl       String?
+  reference      String?
+  // Who entered it: the member, or the collector acting for them (cash / assisted accounts)
+  recordedById   String        @db.ObjectId
+  verifiedById   String?       @db.ObjectId
+  rejectReason   String?
+  createdAt      DateTime      @default(now())
+  verifiedAt     DateTime?
+
+  contribution AjoContribution @relation(fields: [contributionId], references: [id])
+
+  @@index([contributionId])
+}
+
+model AjoGuarantee {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId   String @db.ObjectId
+  memberId    String @db.ObjectId
+  guarantorId String @db.ObjectId
+
+  @@unique([ajoPoolId, memberId])
+}
+
+model PoolAcceptance {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId    String   @db.ObjectId
+  userId       String   @db.ObjectId
+  acceptedById String   @db.ObjectId
+  acceptedAt   DateTime @default(now())
+
+  @@unique([ajoPoolId, userId])
+}
+
+model TurnSwap {
+  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId   String     @db.ObjectId
+  requesterId String     @db.ObjectId
+  peerId      String     @db.ObjectId
+  scheduleAId String     @db.ObjectId // requester's current slot
+  scheduleBId String     @db.ObjectId // peer's current slot
+  reason      String?
+  status      SwapStatus @default(PENDING_PEER)
+  createdAt   DateTime   @default(now())
+}
+
+// ── TRANSPARENCY: LEDGER, ATTESTATIONS, DISPUTES ──
+
+model LedgerEntry {
+  id          String          @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId   String?         @db.ObjectId
+  foodPoolId  String?         @db.ObjectId
+  campaignId  String?         @db.ObjectId
+  direction   LedgerDirection
+  type        LedgerType
+  amount      Float
+  note        String?
+  refId       String?
+  createdById String          @db.ObjectId
+  createdAt   DateTime        @default(now())
+
+  @@index([ajoPoolId, createdAt])
+  @@index([foodPoolId, createdAt])
+  @@index([campaignId, createdAt])
+}
+
+// The collector's own statement of how much of the pool's money they are holding right now.
+model FundsAttestation {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  ajoPoolId      String?  @db.ObjectId
+  foodPoolId     String?  @db.ObjectId
+  campaignId     String?  @db.ObjectId
+  declaredAmount Float
+  ledgerAmount   Float
+  note           String?
+  proofUrl       String?
+  createdById    String   @db.ObjectId
+  createdAt      DateTime @default(now())
+
+  @@index([ajoPoolId, createdAt])
+  @@index([foodPoolId, createdAt])
+}
+
+model Dispute {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  groupId      String        @db.ObjectId
+  ajoPoolId    String?       @db.ObjectId
+  scheduleId   String?       @db.ObjectId
+  foodPoolId   String?       @db.ObjectId
+  campaignId   String?       @db.ObjectId
+  raisedById   String        @db.ObjectId
+  kind         String
+  description  String
+  status       DisputeStatus @default(OPEN)
+  resolution   String?
+  resolvedById String?       @db.ObjectId
+  createdAt    DateTime      @default(now())
+  resolvedAt   DateTime?
+
+  @@index([groupId, status])
+}
+
+// ── FOOD ENGINE: CCGB ────────────────────────
+// The collector holds pool funds and pays the supplier/driver, recording each payment here.
+
+model CcgbSupplier {
+  id              String       @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String       @unique @db.ObjectId
+  businessName    String
+  supplierType    SupplierType
+  isAdminApproved Boolean      @default(false)
+  rcNumber        String?
+  locationLat     Float?
+  locationLng     Float?
+  ratingAvg       Float        @default(0)
+  ratingCount     Int          @default(0)
+  createdAt       DateTime     @default(now())
+
+  user     User          @relation(fields: [userId], references: [id])
+  products CcgbProduct[]
+}
+
+model CcgbProduct {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  supplierId      String   @db.ObjectId
+  name            String
+  category        String
+  unitPrice       Float
+  kgWeightPerUnit Float
+  isAvailable     Boolean  @default(true)
+  imageUrl        String?
+  createdAt       DateTime @default(now())
+
+  supplier   CcgbSupplier   @relation(fields: [supplierId], references: [id])
+  votes      FoodPollVote[]
+  wonByPools FoodPool[]     @relation("WinningProduct")
+}
+
+model FoodPool {
+  id               String         @id @default(auto()) @map("_id") @db.ObjectId
+  groupId          String         @db.ObjectId
+  // Price for ONE share. A household can take several shares.
+  contributionAmt  Float
+  targetMembers    Int
+  currentMembers   Int            @default(0)
+  // Verified money only (counted when the collector confirms a member's payment).
+  totalFund        Float          @default(0.00)
+  transportFee     Float          @default(0.00)
+  platformFee      Float          @default(0.00)
+  netFoodBudget    Float          @default(0.00)
+  winningProductId String?        @db.ObjectId
+  driverId         String?        @db.ObjectId
+  communityHubAddr String?
+  status           FoodPoolStatus @default(COLLECTING)
+  liveWindowEnd    DateTime
+  // Price lock + order sizing, fixed at lock time
+  lockedUnitPrice  Float?
+  orderUnits       Int?
+  orderKg          Float?
+  leftoverAmt      Float          @default(0)
+  supplierDepositPct Float        @default(50)
+  // Handover
+  receivedKg       Float?
+  deliveryProofUrl String?
+  deliveredAt      DateTime?
+  createdAt        DateTime       @default(now())
+
+  group          CommunityGroup     @relation(fields: [groupId], references: [id])
+  winningProduct CcgbProduct?       @relation("WinningProduct", fields: [winningProductId], references: [id])
+  driver         User?              @relation("PoolDriver", fields: [driverId], references: [id])
+  members        FoodPoolMember[]
+  itemVotes      FoodPollVote[]
+  purchaseOrder  FoodPurchaseOrder?
+}
+
+model FoodPoolMember {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  poolId            String    @db.ObjectId
+  userId            String    @db.ObjectId
+  proofOfPaymentUrl String?
+  // Household size / number of shares taken
+  shares            Int       @default(1)
+  isPaidVerified    Boolean   @default(false)
+  hasVoted          Boolean   @default(false)
+  pickupSlotId      String?   @db.ObjectId
+  collectedAt       DateTime?
+  refundDue         Float     @default(0)
+  refundedAt        DateTime?
+  joinedAt          DateTime  @default(now())
+
+  pool FoodPool @relation(fields: [poolId], references: [id])
+  user User     @relation(fields: [userId], references: [id])
+
+  @@unique([poolId, userId])
+}
+
+model FoodPickupSlot {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  poolId      String   @db.ObjectId
+  startsAt    DateTime
+  endsAt      DateTime
+  capacity    Int
+  bookedCount Int      @default(0)
+
+  @@index([poolId])
+}
+
+model FoodPayment {
+  id           String          @id @default(auto()) @map("_id") @db.ObjectId
+  poolId       String          @db.ObjectId
+  kind         FoodPaymentKind
+  amount       Float
+  toUserId     String?         @db.ObjectId
+  reference    String?
+  proofUrl     String?
+  recordedById String          @db.ObjectId
+  createdAt    DateTime        @default(now())
+
+  @@index([poolId])
+}
+
+model SupplierRating {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  supplierId String   @db.ObjectId
+  poolId     String   @db.ObjectId
+  userId     String   @db.ObjectId
+  stars      Int
+  qualityOk  Boolean  @default(true)
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  @@unique([poolId, userId])
+}
+
+model FoodPollVote {
+  id        String      @id @default(auto()) @map("_id") @db.ObjectId
+  poolId    String      @db.ObjectId
+  productId String      @db.ObjectId
+  userId    String      @db.ObjectId
+  createdAt DateTime    @default(now())
+
+  pool    FoodPool    @relation(fields: [poolId], references: [id])
+  product CcgbProduct @relation(fields: [productId], references: [id])
+  user    User        @relation(fields: [userId], references: [id])
+
+  @@unique([poolId, userId])
+}
+
+model FoodPurchaseOrder {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  poolId       String   @unique @db.ObjectId
+  supplierId   String   @db.ObjectId
+  productId    String   @db.ObjectId
+  orderAmount  Float
+  transportFee Float
+  driverId     String?  @db.ObjectId
+  status       String   @default("ISSUED")
+  issuedAt     DateTime @default(now())
+
+  pool FoodPool @relation(fields: [poolId], references: [id])
+}
+
+
+// ── ÌTÌLẸ́YÌN: EVENTS & HELP ─────────────────
+// Aṣọ ẹbí (matching fabric for a party) and "help someone" collections.
+// The host holds the money and records every gift; the platform only records and shows it, like a collector.
+
+model Campaign {
+  id                   String         @id @default(auto()) @map("_id") @db.ObjectId
+  groupId              String         @db.ObjectId
+  hostId               String         @db.ObjectId
+  kind                 CampaignKind
+  // WEDDING | BURIAL | BIRTHDAY | NAMING | OTHER (aṣọ ẹbí) or MEDICAL | SCHOOL | RENT | OTHER (help)
+  occasion             String
+  // Free text the host types when occasion is OTHER, e.g. "House warming"
+  occasionLabel        String?
+  title                String
+  description          String?
+  eventDate            DateTime?
+  venue                String?
+  // Aṣọ ẹbí: each person's part, set by the host
+  partAmount           Float?
+  targetAmount         Float?
+  targetPeople         Int?
+  // Help: who the money and food are for. recipientUserId lets them confirm it arrived.
+  recipientName        String?
+  recipientNote        String?
+  recipientUserId      String?        @db.ObjectId
+  status               CampaignStatus @default(OPEN)
+  closesAt             DateTime?
+  deliveredAt          DateTime?
+  deliveredAmount      Float?
+  deliveryNote         String?
+  deliveryProofUrl     String?
+  recipientConfirmedAt DateTime?
+  createdAt            DateTime       @default(now())
+
+  options CampaignOption[]
+  gifts   CampaignGift[]
+
+  @@index([groupId, status])
+}
+
+model CampaignOption {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  campaignId String @db.ObjectId
+  label      String
+  note       String?
+
+  campaign Campaign       @relation(fields: [campaignId], references: [id])
+  gifts    CampaignGift[]
+}
+
+model CampaignGift {
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  campaignId   String         @db.ObjectId
+  userId       String         @db.ObjectId
+  kind         GiftKind       @default(MONEY)
+  optionId     String?        @db.ObjectId
+  amount       Float          @default(0)
+  // FOOD gifts are pledges, e.g. "2 bags of rice"
+  foodNote     String?
+  method       PaymentMethod?
+  status       PaymentStatus  @default(PENDING)
+  proofUrl     String?
+  reference    String?
+  recordedById String         @db.ObjectId
+  verifiedById String?        @db.ObjectId
+  rejectReason String?
+  receiptNo    String?
+  // Fabric or food handed over to the giver
+  collectedAt  DateTime?
+  createdAt    DateTime       @default(now())
+  verifiedAt   DateTime?
+
+  campaign Campaign        @relation(fields: [campaignId], references: [id])
+  option   CampaignOption? @relation(fields: [optionId], references: [id])
+
+  @@index([campaignId, status])
+  @@index([userId])
+}
+
+
+// ── LEDGER-ONLY FUNDS (Phase 1) ───────────────
+// Money is paid by members straight into a named facilitator's bank account. The app never holds or moves it:
+// it records the payer's declaration, the facilitator's confirmation, and derives every balance from CONFIRMED rows.
+// Rows are append-only: an amount is never edited, corrections are new ADJUSTMENT rows.
+
+enum FundsEntryType {
+  CONTRIBUTION
+  RELEASE
+  REFUND
+  COMMISSION
+  ADJUSTMENT
+}
+
+enum FundsMode {
+  ESCROW
+  COLLECTOR_CUSTODY
+}
+
+enum RegistrationStatus {
+  UNREGISTERED
+  IN_PROGRESS
+  REGISTERED
+}
+
+enum CommissionStatus {
+  PENDING
+  EARNED
+  REFUNDED
+}
+
+enum GatewayFeeBearer {
+  PLATFORM
+  GROUP
+  PAYER
+}
+
+enum ProviderTxKind {
+  COLLECT
+  DISBURSE
+}
+
+enum ProviderTxStatus {
+  INITIATED
+  PAID
+  FAILED
+  DISBURSING
+  DISBURSED
+  DISBURSE_FAILED
+}
+
+enum FundsPurpose {
+  AJO
+  CCGB
+  SETTLEMENT_FUND
+}
+
+enum FundsEntryStatus {
+  DECLARED
+  CONFIRMED
+  DISPUTED
+  REVERSED
+}
+
+model FacilitatorAccount {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String   @db.ObjectId
+  bankName          String
+  accountNumber     String
+  accountName       String
+  isVerifiedByAdmin Boolean  @default(false)
+  communityGroupId  String?  @db.ObjectId
+  createdAt         DateTime @default(now())
+
+  entries FundsEntry[]
+
+  @@index([userId])
+}
+
+model FundsEntry {
+  id                      String           @id @default(auto()) @map("_id") @db.ObjectId
+  groupId                 String?          @db.ObjectId
+  fundsMode               FundsMode        @default(COLLECTOR_CUSTODY)
+  type                    FundsEntryType
+  purposeType             FundsPurpose
+  purposeId               String           @db.ObjectId
+  // CONTRIBUTION / ADJUSTMENT: the payer. RELEASE: the facilitator who paid out.
+  payerUserId             String           @db.ObjectId
+  // RELEASE only: who received the money and must confirm it
+  counterpartyUserId      String?          @db.ObjectId
+  // CUSTODY entries only: the collector's bank account the payer paid into
+  facilitatorAccountId    String?          @db.ObjectId
+  // ESCROW entries: Monnify transactionReference / disbursement reference
+  providerRef             String?
+  // Money in kobo (1/100 naira) as a BigInt: MongoDB has no Decimal type and floats must never hold money.
+  // ADJUSTMENT amounts may be negative. Use src/lib/kobo.ts to convert to/from naira.
+  amountKobo              BigInt
+  bankReference           String?
+  proofImageUrl           String?
+  note                    String?
+  // ADJUSTMENT: the entry corrected. REFUND / COMMISSION: the contribution they relate to.
+  relatedEntryId          String?          @db.ObjectId
+  payerDeclaredAt         DateTime         @default(now())
+  facilitatorConfirmedAt  DateTime?
+  facilitatorConfirmedById String?         @db.ObjectId
+  status                  FundsEntryStatus @default(DECLARED)
+  disputeNote             String?
+  // 48h reminder to the facilitator, then escalation to a platform admin
+  reminderSentAt          DateTime?
+  escalatedAt             DateTime?
+  createdAt               DateTime         @default(now())
+
+  account FacilitatorAccount? @relation(fields: [facilitatorAccountId], references: [id])
+
+  @@index([groupId, status])
+  @@index([providerRef])
+  @@index([facilitatorAccountId, status])
+  @@index([payerUserId, createdAt])
+  @@index([purposeType, purposeId, status])
+}
+
+// ── ESCROW (Monnify) ──────────────────────────
+// One row per payment we asked Monnify to collect, or per disbursement we asked it to make.
+
+model ProviderTransaction {
+  id                   String           @id @default(auto()) @map("_id") @db.ObjectId
+  provider             String           @default("MONNIFY")
+  kind                 ProviderTxKind
+  // Our own idempotent reference, sent to Monnify as paymentReference / disbursement reference
+  paymentReference     String           @unique
+  transactionReference String?
+  groupId              String           @db.ObjectId
+  purposeType          FundsPurpose
+  purposeId            String           @db.ObjectId
+  payerUserId          String           @db.ObjectId
+  payeeUserId          String?          @db.ObjectId
+  amountKobo           BigInt
+  status               ProviderTxStatus @default(INITIATED)
+  checkoutUrl          String?
+  fundsEntryId         String?          @db.ObjectId
+  attempts             Int              @default(0)
+  lastError            String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([kind, status, createdAt])
+  @@index([purposeType, purposeId])
+}
+
+// Each Monnify webhook delivery is recorded once. The unique reference makes handlers idempotent.
+model WebhookReceipt {
+  id                   String   @id @default(auto()) @map("_id") @db.ObjectId
+  transactionReference String   @unique
+  eventType            String
+  receivedAt           DateTime @default(now())
+}
+
+// ── FEES & COMMISSION ─────────────────────────
+// Percentages are basis points (500 = 5%) so no float ever holds a rate.
+
+model PlatformConfig {
+  id                     String           @id @default(auto()) @map("_id") @db.ObjectId
+  key                    String           @unique
+  platformCommissionBp   Int              @default(500)
+  settlementCommissionBp Int              @default(0)
+  gatewayFeeBearer       GatewayFeeBearer @default(PLATFORM)
+  updatedById            String?          @db.ObjectId
+  updatedAt              DateTime         @updatedAt
+}
+
+// PENDING when a contribution is confirmed, EARNED only when the cycle/pool completes, REFUNDED when it is dissolved.
+model CommissionAccrual {
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  groupId      String           @db.ObjectId
+  purposeType  FundsPurpose
+  purposeId    String           @db.ObjectId
+  fundsEntryId String           @unique @db.ObjectId
+  payerUserId  String           @db.ObjectId
+  amountKobo   BigInt
+  status       CommissionStatus @default(PENDING)
+  // COLLECTOR_CUSTODY accruals are billed to the collector in a monthly CommissionInvoice. ESCROW accruals are split at settlement.
+  fundsMode    FundsMode        @default(ESCROW)
+  collectorUserId String?       @db.ObjectId
+  invoiceId    String?          @db.ObjectId
+  earnedAt     DateTime?
+  refundedAt   DateTime?
+  createdAt    DateTime         @default(now())
+
+  @@index([purposeType, purposeId, status])
+  @@index([groupId, status])
+  @@index([collectorUserId, status])
+}
+
+// ── COLLECTOR VERIFICATION & CUSTODY TIER ─────
+// No raw BVN/NIN is stored, only the provider's reference and the outcome. No biometric data of any kind.
+
+model CollectorKyc {
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String    @unique @db.ObjectId
+  approvedTier        Int       @default(0)
+  requestedTier       Int?
+  // A tier drop scheduled for the start of the next cycle
+  pendingTier         Int?
+  bvnVerified         Boolean   @default(false)
+  ninVerified         Boolean   @default(false)
+  nameMatch           Boolean   @default(false)
+  providerRef         String?
+  addressAttested     Boolean   @default(false)
+  entityCertVerified  Boolean   @default(false)
+  licenseDocsVerified Boolean   @default(false)
+  // Tier 3: the receiving bank account must be in the entity's name
+  entityAccountName   String?
+  boardEndorsed       Boolean   @default(false)
+  verifiedAt          DateTime?
+  tierChangedAt       DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ── CONSENT & DISCLAIMERS (1B) ────────────────
+// The controlling text is the lawyer-approved English original. Every other language is a translation:
+// HUMAN_REVIEWED once a native speaker + back-translation + lawyer have signed it off, otherwise MACHINE_TRANSLATED
+// (shown with an "unofficial translation" banner). A signature is always on the ORIGINAL document.
+
+enum ConsentDocType {
+  CUSTODY_MEMBER_DISCLOSURE
+  CUSTODY_COLLECTOR_AGREEMENT
+  PLATFORM_TERMS
+}
+
+enum TranslationStatus {
+  ORIGINAL
+  HUMAN_REVIEWED
+  MACHINE_TRANSLATED
+}
+
+model ConsentDocument {
+  id                       String            @id @default(auto()) @map("_id") @db.ObjectId
+  type                     ConsentDocType
+  version                  Int
+  // BCP-47, e.g. en, yo, pcm, ha, ig, fr, guw, or x-<name> for a language typed in by the user
+  language                 String
+  languageLabel            String?
+  bodyMarkdown             String
+  sha256                   String
+  effectiveAt              DateTime          @default(now())
+  supersededAt             DateTime?
+  translationStatus        TranslationStatus @default(ORIGINAL)
+  translatedFromDocumentId String?           @db.ObjectId
+  reviewedBy               String?
+  reviewedAt               DateTime?
+  createdAt                DateTime          @default(now())
+
+  @@index([type, language, supersededAt])
+  @@index([translatedFromDocumentId, language])
+  @@index([sha256])
+}
+
+model ConsentSignature {
+  id                  String            @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String            @db.ObjectId
+  // Always the ORIGINAL (controlling) document, never a translation
+  documentId          String            @db.ObjectId
+  documentSha256      String
+  groupId             String?           @db.ObjectId
+  typedName           String
+  signatureImageUrl   String?
+  ipAddress           String
+  userAgent           String
+  comprehensionPassed Boolean
+  otpVerified         Boolean           @default(false)
+  signedAt            DateTime          @default(now())
+  signatureHash       String
+  // What the person actually read
+  translationLanguage String
+  translationHash     String?
+  translationStatus   TranslationStatus
+  originalViewable    Boolean           @default(true)
+  // Assisted signing: a witness read it aloud in the person's language
+  witnessUserId       String?           @db.ObjectId
+  witnessName         String?
+  witnessPhone        String?
+  witnessSignature    String?
+  witnessExplained    Boolean?
+  receiptUrl          String?
+
+  @@unique([userId, documentId, groupId])
+  @@index([groupId, documentId])
+}
+
+model ConsentOtp {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String    @unique @db.ObjectId
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+// Cache of machine-translated interface strings (questions, buttons, banners, audio script).
+model ConsentUiTranslation {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  hash        String
+  language    String
+  stringsJson Json
+  createdAt   DateTime @default(now())
+
+  @@unique([hash, language])
+}
+
+// ── SUBSCRIPTIONS & COMMISSION BILLING (1C) ───
+// The platform's own revenue. It is paid through Monnify but never touches, and is never mixed with, pooled group funds.
+
+enum PlanKind {
+  ORGANIZER
+  MEMBER_PLUS
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  GRACE
+  LAPSED
+  CANCELLED
+}
+
+enum BillingInvoiceStatus {
+  PENDING
+  PAID
+  VOID
+}
+
+enum CommissionInvoiceStatus {
+  PENDING
+  PAID
+  WAIVED
+  VOID
+}
+
+// Prices live here, are effective-dated and admin-editable. Nothing in code holds a price.
+model PlanPrice {
+  id            String          @id @default(auto()) @map("_id") @db.ObjectId
+  plan          PlanKind
+  interval      BillingInterval
+  amountKobo    BigInt
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdById   String?         @db.ObjectId
+  createdAt     DateTime        @default(now())
+
+  @@index([plan, interval, effectiveFrom])
+}
+
+model Subscription {
+  id                 String             @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String             @db.ObjectId
+  plan               PlanKind
+  interval           BillingInterval
+  // A new subscription is LAPSED with no period until its first invoice is paid.
+  status             SubscriptionStatus @default(LAPSED)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  graceEndsAt        DateTime?
+  // The price of the CURRENT period, frozen when it was paid: a later price change never touches it.
+  priceKobo          BigInt?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  cancelledAt        DateTime?
+  // Which renewal reminders have gone out for the current period (7, 3, 0 days before)
+  remindersSent      Int[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([userId, plan])
+  @@index([status, currentPeriodEnd])
+}
+
+model SubscriptionInvoice {
+  id                   String               @id @default(auto()) @map("_id") @db.ObjectId
+  subscriptionId       String               @db.ObjectId
+  userId               String               @db.ObjectId
+  plan                 PlanKind
+  interval             BillingInterval
+  amountKobo           BigInt
+  periodStart          DateTime
+  periodEnd            DateTime
+  status               BillingInvoiceStatus @default(PENDING)
+  paymentReference     String               @unique
+  transactionReference String?
+  checkoutUrl          String?
+  paidAt               DateTime?
+  createdAt            DateTime             @default(now())
+
+  @@index([subscriptionId, status])
+  @@index([userId, createdAt])
+}
+
+// Collector-custody mode: the app cannot split the money, so the collector is invoiced monthly for the commission
+// on cycles that completed. Built from EARNED CommissionAccrual rows, so it can never exceed what members really paid.
+model CommissionInvoice {
+  id                   String                  @id @default(auto()) @map("_id") @db.ObjectId
+  collectorUserId      String                  @db.ObjectId
+  // The month this invoice was cut for, e.g. 2026-10-01
+  periodStart          DateTime
+  periodEnd            DateTime
+  amountKobo           BigInt
+  accrualCount         Int
+  // Confirmed money the commission was worked out on, and what members themselves declared for the same cycles
+  confirmedKobo        BigInt
+  declaredKobo         BigInt
+  divergenceBp         Int                     @default(0)
+  flaggedDivergence    Boolean                 @default(false)
+  status               CommissionInvoiceStatus @default(PENDING)
+  dueAt                DateTime
+  // 0 none, 1 warned, 2 new cycles blocked, 3 sent to admin review
+  escalationLevel      Int                     @default(0)
+  remindersSent        Int[]
+  paymentReference     String                  @unique
+  transactionReference String?
+  checkoutUrl          String?
+  paidAt               DateTime?
+  createdAt            DateTime                @default(now())
+
+  @@unique([collectorUserId, periodStart])
+  @@index([status, dueAt])
+}
+
+// ── LEGACY RECORDS DIGITIZATION (1D) ──────────
+// Paper and spreadsheet history moved into the app. Principles: originals are never touched; OCR only SUGGESTS and a
+// human accepts every row; imported history is HISTORICAL, never live money (it feeds no balance, commission, billing or
+// trust score until members verify it); nothing is ever edited or deleted, corrections supersede; everything exports.
+
+enum RecordSourceKind {
+  SCAN
+  PDF
+  SPREADSHEET
+  TYPED
+  DOCUMENT
+}
+
+enum ImportBatchStatus {
+  DRAFT
+  OCR_PENDING
+  IN_REVIEW
+  APPROVED
+  COMMITTED
+  REJECTED
+}
+
+enum RecordType {
+  MEMBERS
+  CONTRIBUTIONS
+  PAYOUTS
+  ARREARS
+  OPENING_POSITION
+}
+
+enum StagedRowStatus {
+  SUGGESTED
+  EDITED
+  ACCEPTED
+  REJECTED
+}
+
+enum HistoricalKind {
+  CONTRIBUTION
+  PAYOUT
+  ARREARS
+  OPENING
+}
+
+enum HistoricalVerification {
+  IMPORTED_UNVERIFIED
+  MEMBER_VERIFIED
+  DISPUTED
+}
+
+enum DocFolder {
+  CONSTITUTION
+  MINUTES
+  REGISTER
+  RECEIPTS
+  CERTIFICATES
+  OTHER
+}
+
+enum DocVisibility {
+  ADMIN_ONLY
+  BOARD
+  MEMBERS
+}
+
+// The ORIGINAL upload. Immutable: the hash is stored, nothing here is ever updated.
+model RecordSource {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  groupId        String           @db.ObjectId
+  uploadedById   String           @db.ObjectId
+  kind           RecordSourceKind
+  // For files: SHA-256 over the page hashes in order. For typed entry: SHA-256 of the submitted rows.
+  originalSha256 String
+  pageCount      Int
+  sizeBytes      BigInt
+  language       String           @default("en")
+  // A trusted helper (e.g. a local digitization agent) who did the scanning/typing on the organizer's behalf
+  assistedById   String?          @db.ObjectId
+  createdAt      DateTime         @default(now())
+
+  pages RecordPage[]
+
+  @@index([groupId, createdAt])
+}
+
+model RecordPage {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  sourceId   String @db.ObjectId
+  pageNumber Int
+  // Where the ENCRYPTED file lives inside the records vault. Never a public URL.
+  vaultKey   String
+  sha256     String
+  mime       String
+  sizeBytes  Int
+
+  source RecordSource @relation(fields: [sourceId], references: [id])
+
+  @@unique([sourceId, pageNumber])
+}
+
+model ImportBatch {
+  id               String            @id @default(auto()) @map("_id") @db.ObjectId
+  groupId          String            @db.ObjectId
+  sourceId         String            @db.ObjectId
+  recordType       RecordType
+  status           ImportBatchStatus @default(DRAFT)
+  rowCount         Int               @default(0)
+  createdById      String            @db.ObjectId
+  approvedById     String?           @db.ObjectId
+  approvedAt       DateTime?
+  // OPENING_POSITION imports also need a Trust Board sign-off before they are committed
+  boardSignoffById String?           @db.ObjectId
+  boardSignoffAt   DateTime?
+  committedAt      DateTime?
+  ocrProvider      String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([groupId, status])
+}
+
+model StagedRow {
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
+  batchId         String          @db.ObjectId
+  pageNumber      Int?
+  rawText         String?
+  // Where on the page this row was read from, so a reviewer sees the cropped region beside the suggestion
+  box             Json?
+  // What was read or typed, exactly. Issues are always re-derived from this, so they never go stale after an edit.
+  rawFields       Json
+  parsedJson      Json
+  confidence      Json
+  issues          String[]
+  status          StagedRowStatus @default(SUGGESTED)
+  reviewedById    String?         @db.ObjectId
+  reviewedAt      DateTime?
+  matchedUserId   String?         @db.ObjectId
+  matchedLegacyId String?         @db.ObjectId
+  matchScore      Float?
+  committedEntryId String?        @db.ObjectId
+
+  @@index([batchId, status])
+}
+
+// Never edited in place and never deleted. A correction creates a new row and points the old one at it.
+model HistoricalLedgerEntry {
+  id                 String                 @id @default(auto()) @map("_id") @db.ObjectId
+  groupId            String                 @db.ObjectId
+  userId             String?                @db.ObjectId
+  legacyMemberId     String?                @db.ObjectId
+  memberName         String
+  date               DateTime
+  amountKobo         BigInt
+  kind               HistoricalKind
+  cycleLabel         String?
+  sourceId           String?                @db.ObjectId
+  batchId            String?                @db.ObjectId
+  verificationStatus HistoricalVerification @default(IMPORTED_UNVERIFIED)
+  verifiedAt         DateTime?
+  disputeNote        String?
+  supersededById     String?                @db.ObjectId
+  redacted           Boolean                @default(false)
+  createdAt          DateTime               @default(now())
+
+  @@index([groupId, date])
+  @@index([userId])
+  @@index([legacyMemberId])
+}
+
+// A person in the old records who is not yet a user. They claim their history by signing in with their phone.
+model LegacyMember {
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  groupId             String    @db.ObjectId
+  name                String
+  phone               String?
+  joinDate            DateTime?
+  claimedByUserId     String?   @db.ObjectId
+  claimedAt           DateTime?
+  // Duplicates are merged by pointer, not by rewriting history
+  mergedIntoUserId    String?   @db.ObjectId
+  mergedIntoLegacyId  String?   @db.ObjectId
+  createdAt           DateTime  @default(now())
+
+  @@index([groupId])
+  @@index([phone])
+}
+
+model RepositoryDocument {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  groupId      String        @db.ObjectId
+  folder       DocFolder
+  title        String
+  tags         String[]
+  ocrText      String?
+  visibility   DocVisibility @default(ADMIN_ONLY)
+  sourceId     String        @db.ObjectId
+  retention    Boolean       @default(false)
+  uploadedById String        @db.ObjectId
+  createdAt    DateTime      @default(now())
+
+  @@index([groupId, folder])
+}
+
+model RecordAccessLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  groupId   String   @db.ObjectId
+  action    String
+  entity    String
+  entityId  String?
+  createdAt DateTime @default(now())
+
+  @@index([groupId, createdAt])
+}
+
+// The organizer confirms the data-processing notice before importing anyone else's personal information.
+model RecordsPrivacyConsent {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  groupId       String   @db.ObjectId
+  userId        String   @db.ObjectId
+  noticeVersion String
+  confirmedAt   DateTime @default(now())
+
+  @@unique([groupId, noticeVersion])
+}
+
+model OcrUsage {
+  id      String @id @default(auto()) @map("_id") @db.ObjectId
+  groupId String @db.ObjectId
+  month   String
+  pages   Int    @default(0)
+
+  @@unique([groupId, month])
+}
+
+// ── APPRENTICESHIP ("Igba Boyi") CONTRACTS (Prompt 2) ─────────
+// A master trains an apprentice; the master saves monthly toward the apprentice's start-up capital in a Settlement Fund
+// held in ESCROW. The app records, verifies, reminds and reports. It promises no return and pays no interest.
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURES
+  ACTIVE
+  PAUSED
+  COMPLETED_PENDING_SETTLEMENT
+  GRADUATED
+  TERMINATED
+}
+
+enum TenureMonths {
+  SIX
+  NINE
+  TWELVE
+  EIGHTEEN
+  TWENTY_FOUR
+}
+
+enum MilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED_FOR_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ConductCategory {
+  PUNCTUALITY
+  SKILL_PROGRESS
+  HONESTY
+  ATTITUDE
+  SAFETY
+  TEACHING
+  FAIR_TREATMENT
+  WELFARE
+  OTHER
+}
+
+enum SignerRole {
+  MASTER
+  APPRENTICE
+  GUARANTOR
+  PARENT_GUARDIAN
+}
+
+// Who a conduct rating is ABOUT. A master rates the apprentice; the apprentice rates the master: no one grades themselves.
+enum RatedParty {
+  APPRENTICE
+  MASTER
+}
+
+enum MasterStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SettlementStatus {
+  ACCUMULATING
+  READY_FOR_RELEASE
+  RELEASED
+  FORFEIT_REVIEW
+}
+
+// A trade master must be approved by an admin or the Trust Board before they can start a contract.
+model TradeMasterProfile {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String       @unique @db.ObjectId
+  tradeCategories String[]
+  status         MasterStatus @default(PENDING)
+  appliedAt      DateTime     @default(now())
+  decidedById    String?      @db.ObjectId
+  decidedAt      DateTime?
+  decisionNote   String?
+}
+
+model ApprenticeshipContract {
+  id                     String         @id @default(auto()) @map("_id") @db.ObjectId
+  masterId               String         @db.ObjectId
+  apprenticeId           String         @db.ObjectId
+  guarantorId            String         @db.ObjectId
+  // Required when the apprentice is under 18. The minor's date of birth is used once to decide this and is never copied here.
+  guardianId             String?        @db.ObjectId
+  minorApprentice        Boolean        @default(false)
+  communityGroupId       String         @db.ObjectId
+  tradeCategory          String
+  tenure                 TenureMonths
+  durationMonths         Int
+  status                 ContractStatus @default(DRAFT)
+  // Set when the contract becomes ACTIVE, never at creation
+  startDate              DateTime?
+  endDate                DateTime?
+  monthlyContributionKobo BigInt
+  targetSettlementKobo   BigInt
+  // Optional welfare stipend for the apprentice
+  monthlyStipendKobo     BigInt?
+  termsAndConditions     String
+  pausedAt               DateTime?
+  pausedDays             Int            @default(0)
+  statusReason           String?
+  statusChangedById      String?        @db.ObjectId
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  signatures ContractSignature[]
+  milestones ContractMilestone[]
+  conduct    ConductLog[]
+  badges     EarnedSkillBadge[]
+
+  @@index([masterId])
+  @@index([apprenticeId])
+  @@index([guarantorId])
+  @@index([communityGroupId, status])
+}
+
+model ContractSignature {
+  id                String     @id @default(auto()) @map("_id") @db.ObjectId
+  contractId        String     @db.ObjectId
+  signerRole        SignerRole
+  userId            String     @db.ObjectId
+  typedName         String
+  signatureImageUrl String
+  ipAddress         String
+  userAgent         String
+  signedAt          DateTime   @default(now())
+
+  contract ApprenticeshipContract @relation(fields: [contractId], references: [id])
+
+  @@unique([contractId, signerRole])
+}
+
+model ContractMilestone {
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  contractId     String          @db.ObjectId
+  order          Int
+  title          String
+  description    String?
+  // The master may propose due months at creation; the real date is worked out when the contract becomes ACTIVE
+  dueMonth       Int?
+  dueDate        DateTime?
+  status         MilestoneStatus @default(NOT_STARTED)
+  evidenceUrl    String?
+  submissionNote String?
+  submittedAt    DateTime?
+  reviewedAt     DateTime?
+  reviewedById   String?         @db.ObjectId
+  reviewNote     String?
+
+  contract ApprenticeshipContract @relation(fields: [contractId], references: [id])
+
+  @@index([contractId, order])
+}
+
+model ConductLog {
+  id         String          @id @default(auto()) @map("_id") @db.ObjectId
+  contractId String          @db.ObjectId
+  authorId   String          @db.ObjectId
+  ratedParty RatedParty
+  category   ConductCategory
+  // 1 (very poor) to 5 (excellent). 1-2 counts as an honesty flag when the category is HONESTY.
+  rating     Int
+  note       String?
+  // Set when the Trust Board upholds an appeal against this log. An excluded log no longer counts toward anyone's score.
+  excluded   Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+
+  contract ApprenticeshipContract @relation(fields: [contractId], references: [id])
+
+  @@index([contractId, createdAt])
+}
+
+model EarnedSkillBadge {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  contractId   String   @db.ObjectId
+  milestoneId  String?  @db.ObjectId
+  apprenticeId String   @db.ObjectId
+  skill        String
+  awardedById  String   @db.ObjectId
+  awardedAt    DateTime @default(now())
+
+  contract ApprenticeshipContract @relation(fields: [contractId], references: [id])
+
+  @@index([apprenticeId])
+}
+
+// Created when the contract activates. Prompt 3 builds the contribution schedule and release workflow on top of it.
+// Its id is the purposeId of every SETTLEMENT_FUND ledger entry, and it is ESCROW-ONLY.
+model SettlementFund {
+  id         String           @id @default(auto()) @map("_id") @db.ObjectId
+  contractId String           @unique @db.ObjectId
+  groupId    String           @db.ObjectId
+  status     SettlementStatus @default(ACCUMULATING)
+  releasedAt DateTime?
+  createdAt  DateTime         @default(now())
+}
+
+// ── SETTLEMENT FUND (Prompt 3) ────────────────
+// The master saves monthly toward the apprentice's start-up capital, in ESCROW. Balances are derived from CONFIRMED ledger
+// entries only. There is no interest, no yield and no investor money: the graduate receives exactly what was paid in.
+// Release is a Monnify disbursement, after the graduate confirms where it goes and 2 Trust Board members approve.
+
+enum ReleaseStatus {
+  AWAITING_DESTINATION
+  AWAITING_CONFIRMATION
+  AWAITING_APPROVALS
+  DISBURSING
+  RELEASED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+enum DestinationKind {
+  GRADUATE
+  SUPPLIER
+  LANDLORD
+}
+
+// One row per month of the agreement. Whether it is paid is worked out from the ledger, never stored.
+model ContributionDue {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  contractId     String    @db.ObjectId
+  fundId         String    @db.ObjectId
+  number         Int
+  dueDate        DateTime
+  amountKobo     BigInt
+  // Which reminders have gone out (3 days before, on the day, 2 days late)
+  remindersSent  Int[]
+  // Set once when it is two days late and unpaid. It flags the master to the Trust Board; it never touches money.
+  flaggedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([fundId, number])
+  @@index([contractId, dueDate])
+}
+
+model SettlementRelease {
+  id                    String           @id @default(auto()) @map("_id") @db.ObjectId
+  fundId                String           @db.ObjectId
+  contractId            String           @db.ObjectId
+  status                ReleaseStatus    @default(AWAITING_DESTINATION)
+  openedById            String           @db.ObjectId
+  destinationKind       DestinationKind?
+  bankCode              String?
+  accountNumber         String?
+  // The name the BANK returns for that account number, not what anyone typed
+  accountName           String?
+  destinationNote       String?
+  nameMismatch          Boolean          @default(false)
+  graduateConfirmedAt   DateTime?
+  guardianConfirmedAt   DateTime?
+  approvalsRequired     Int
+  // Fixed only at the moment the disbursement starts: whatever is confirmed in the fund then
+  amountKobo            BigInt?
+  fundsEntryId          String?          @db.ObjectId
+  failureReason         String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  @@index([fundId, status])
+}
+
+model ReleaseApproval {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  releaseId  String   @db.ObjectId
+  approverId String   @db.ObjectId
+  approve    Boolean
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@unique([releaseId, approverId])
+}
+
+// ── COMMUNITY TRUST BOARD, GUARANTORS AND TRUST SCORE (Prompt 4) ──
+// The board is made of people the community already trusts (a representative of the Oba, chiefs, market leaders such as
+// the Iyaloja). An admin approves each member. A guarantor's accountability is social and reputational: nothing is
+// staked and no wallet is touched. Trust scores are recomputed when something happens, never on every read.
+
+enum BoardMemberStatus {
+  PENDING
+  APPROVED
+  REMOVED
+}
+
+enum TrustTier {
+  UNRATED
+  EXEMPLARY
+  HIGH_TRUST
+  FAIR
+  AT_RISK
+  CRITICAL
+}
+
+enum TrustSubject {
+  APPRENTICE
+  MASTER
+}
+
+enum AppealStatus {
+  OPEN
+  UPHELD
+  DISMISSED
+}
+
+model TrustBoard {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  community   String
+  createdById String   @db.ObjectId
+  createdAt   DateTime @default(now())
+
+  members TrustBoardMember[]
+}
+
+model TrustBoardMember {
+  id           String            @id @default(auto()) @map("_id") @db.ObjectId
+  boardId      String            @db.ObjectId
+  userId       String            @db.ObjectId
+  // e.g. "Representative of the Oba", "Chief", "Iyaloja", "Market leader"
+  title        String
+  status       BoardMemberStatus @default(PENDING)
+  approvedById String?           @db.ObjectId
+  approvedAt   DateTime?
+  createdAt    DateTime          @default(now())
+
+  board TrustBoard @relation(fields: [boardId], references: [id])
+
+  @@unique([boardId, userId])
+  @@index([userId])
+}
+
+// A verified community member who co-signs for an apprentice, and how those agreements turned out.
+model GuarantorRecord {
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String    @unique @db.ObjectId
+  verifiedAt          DateTime?
+  verifiedById        String?   @db.ObjectId
+  contractsGuaranteed Int       @default(0)
+  active              Int       @default(0)
+  completed           Int       @default(0)
+  terminated          Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+}
+
+model TrustScore {
+  id           String       @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String       @db.ObjectId
+  subject      TrustSubject
+  // null while UNRATED: a new person is never shown a made-up score
+  score        Int?
+  tier         TrustTier
+  breakdown    Json
+  honestyFlags Int          @default(0)
+  computedAt   DateTime     @default(now())
+
+  @@unique([userId, subject])
+}
+
+model ConductAppeal {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  conductLogId   String       @unique @db.ObjectId
+  contractId     String       @db.ObjectId
+  appellantId    String       @db.ObjectId
+  reason         String
+  status         AppealStatus @default(OPEN)
+  resolvedById   String?      @db.ObjectId
+  resolutionNote String?
+  resolvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([status, createdAt])
+}

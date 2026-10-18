@@ -1,0 +1,20 @@
+# Dependencies and generated output
+**/node_modules/
+**/dist/
+**/dist-ssr/
+ajo-mobile/.expo/
+
+# Local environment and secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Backend local data
+ajo-backend/.mongo-data/
+ajo-backend/uploads/
+ajo-backend/records-vault/
+ajo-backend/records-backups/
+
+# Local files
+**/.DS_Store
+**/*.log
