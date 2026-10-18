@@ -56,5 +56,10 @@
     "ts-jest": "^29.4.14",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0",
+    "handlebars": "^4.7.10",
+    "uuid": "^11.1.1"
   }
 }
