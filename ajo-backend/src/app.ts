@@ -29,6 +29,7 @@ import { UPLOAD_ROOT } from './services/storage.service';
 
 const app = express();
 const webRoot = path.resolve(__dirname, '../public');
+app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } })); // uploaded files are loaded by the apps
 app.use('/files', express.static(UPLOAD_ROOT));
 app.use(cors());
