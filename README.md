@@ -25,7 +25,8 @@ The iOS app uses bundle ID `com.cooperativecommunity.ajo`. Push notifications ar
 due and missed contributions, payout confirmations, payouts ready to record, and member payments awaiting verification.
 The backend stores each signed-in device's Expo push token and removes tokens reported as unregistered by Expo.
 Production mobile builds use `https://theccajo.com/api`; local development uses the Expo host and port 4000 unless
-`EXPO_PUBLIC_API_URL` is set. Set that variable in the EAS build environment to override the API URL for a build profile.
+`EXPO_PUBLIC_API_URL` is set. The EAS `preview` profile explicitly uses the hosted API, so preview builds can test
+against the live Hostinger-hosted backend before production. Local development overrides do not change that profile.
 
 Remote pushes do not work in Expo Go. From `ajo-mobile`, link the app to an Expo account/project and create a development
 build on a physical iPhone:

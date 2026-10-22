@@ -1,6 +1,6 @@
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import * as Notifications from 'expo-notifications';
+import * as Notifications from '../notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
