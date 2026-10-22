@@ -12,7 +12,8 @@ import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
 import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
-import { findUserByEmail, findUserById, findUserByPhone } from '../../lib/mongo-users';
+import { createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone } from '../../lib/mongo-users';
+import { consumeOtpCode, deleteOtpCode, findOtpCode, incrementOtpAttempts, upsertOtpCode } from '../../lib/mongo-otp';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
 
@@ -59,9 +60,9 @@ const normalizeRef = (c: string) => c.trim().toUpperCase().replace(/\s+/g, '');
 /** Who a typed referral code belongs to. A code that does not exist is an error, so a typo does not silently lose the credit. */
 async function referrerFor(code?: string): Promise<string | undefined> {
   if (!code?.trim()) return undefined;
-  const owner = await prisma.user.findFirst({ where: { referralCode: normalizeRef(code) }, select: { id: true } });
-  if (!owner) throw new HttpError(400, 'That referral code was not found. Check it, or leave it empty.');
-  return owner.id;
+  const ownerId = await findUserIdByReferralCode(normalizeRef(code));
+  if (!ownerId) throw new HttpError(400, 'That referral code was not found. Check it, or leave it empty.');
+  return ownerId;
 }
 
 async function referralSummary(userId: string) {
@@ -227,15 +228,15 @@ authRouter.post('/reset-pin', async (req, res) => {
 
 authRouter.post('/request-otp', async (req, res) => {
   const phone = toPhone(phoneBody.parse(req.body));
-  const existing = await prisma.otpCode.findUnique({ where: { phoneNumber: phone } });
+  const existing = await findOtpCode(phone);
   if (existing && Date.now() - existing.createdAt.getTime() < OTP_RESEND_MS) throw new HttpError(429, 'Please wait a minute before asking for another code');
   const otp = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
   const data = { codeHash: hashOtp(phone, otp), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
-  await prisma.otpCode.upsert({ where: { phoneNumber: phone }, create: { phoneNumber: phone, ...data }, update: data });
+  await upsertOtpCode({ phoneNumber: phone, ...data });
   try {
     await sendAuthSms(phone, `Your ÀJỌ verification code is ${otp}. It expires in 10 minutes. Never share it.`);
   } catch (error) {
-    await prisma.otpCode.deleteMany({ where: { phoneNumber: phone, codeHash: data.codeHash } });
+    await deleteOtpCode(phone, data.codeHash);
     throw error;
   }
   res.json({ success: true });
@@ -252,23 +253,32 @@ authRouter.post('/verify-otp', async (req, res) => {
     .parse(req.body);
   const phone = toPhone(body);
 
-  const entry = await prisma.otpCode.findUnique({ where: { phoneNumber: phone } });
+  const entry = await findOtpCode(phone);
   if (!entry || entry.expiresAt < new Date() || entry.attempts >= MAX_OTP_ATTEMPTS) throw new HttpError(400, 'Invalid or expired code');
   const a = Buffer.from(entry.codeHash);
   const b = Buffer.from(hashOtp(phone, body.otp));
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    await prisma.otpCode.update({ where: { id: entry.id }, data: { attempts: { increment: 1 } } });
+    await incrementOtpAttempts(entry.id, MAX_OTP_ATTEMPTS);
     throw new HttpError(400, 'Invalid or expired code');
   }
-  await prisma.otpCode.delete({ where: { id: entry.id } });
+  if (!(await consumeOtpCode(entry.id, entry.codeHash, new Date(), MAX_OTP_ATTEMPTS))) {
+    throw new HttpError(400, 'Invalid or expired code');
+  }
 
-  const existing = await prisma.user.findUnique({ where: { phoneNumber: phone } });
+  const existing = await findUserByPhone(phone);
   const referredById = existing ? undefined : await referrerFor(body.referralCode);
   if (!existing && !body.fullName) throw new HttpError(400, 'fullName is required for new accounts');
   const user = existing
-    ? await prisma.user.update({ where: { id: existing.id }, data: { isVerified: true } })
-    : await prisma.user.create({ data: { phoneNumber: phone, fullName: body.fullName!, role: body.role as UserRole, isVerified: true, country: body.country, ...(referredById ? { referredById } : {}) } });
-  await audit(user.id, 'LOGIN_OTP', 'User', user.id);
+    ? await markUserVerifiedByPhone(phone)
+    : await createVerifiedPhoneUser({
+        phoneNumber: phone,
+        fullName: body.fullName!,
+        role: body.role as UserRole,
+        country: body.country,
+        ...(referredById ? { referredById } : {}),
+      });
+  if (!user) throw new HttpError(404, 'User not found');
+  await auditNative(user.id, 'LOGIN_OTP', 'User', user.id);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 

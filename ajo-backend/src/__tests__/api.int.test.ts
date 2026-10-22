@@ -83,8 +83,16 @@ describe('HTTP: a collector runs an Àjọ pool end to end', () => {
     bola = await login('08033333333', 'Bola Member');
     expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '08088888888' })).status).toBe(200);
     expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '08088888888' })).status).toBe(429); // resend too soon
-    const bad = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08022222222', otp: '000000', fullName: 'x' });
+    const otp = sms.filter((m) => m.to === '+2348088888888').pop()!.msg.match(/code is (\d{6})/)![1];
+    const wrongOtp = otp === '000000' ? '000001' : '000000';
+    const bad = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp: wrongOtp, fullName: 'Otp User' });
     expect(bad.status).toBe(400);
+    const mongo = await require('../lib/mongodb').getMongoDb();
+    expect((await mongo.collection('OtpCode').findOne({ phoneNumber: '+2348088888888' }))?.attempts).toBe(1);
+    const verified = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp, fullName: 'Otp User' });
+    expect(verified.status).toBe(200);
+    expect(await mongo.collection('OtpCode').findOne({ phoneNumber: '+2348088888888' })).toBeNull();
+    expect((await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp, fullName: 'Otp User' })).status).toBe(400);
   });
 
   it('registers and signs in with an email and password without a phone number', async () => {

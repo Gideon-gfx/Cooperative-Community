@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Alert } from './feedback';
 import { api, errMsg } from '../api/client';
@@ -28,6 +29,7 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [sentTo, setSentTo] = useState(false);
   const [otp, setOtp] = useState('');
   const [fullName, setFullName] = useState('');
@@ -39,6 +41,18 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
   const router = useRouter();
 
   const withLoader = useLoader();
+  const passwordStrengthScore = [
+    password.length >= 8,
+    password.length >= 12,
+    /[a-z]/.test(password) && /[A-Z]/.test(password),
+    /[0-9]/.test(password) && /[^a-zA-Z0-9]/.test(password),
+  ].filter(Boolean).length;
+  const passwordStrength = [
+    { label: 'Weak', color: colors.red },
+    { label: 'Fair', color: colors.clay },
+    { label: 'Good', color: colors.cocoaNight2 },
+    { label: 'Strong', color: colors.green },
+  ][Math.max(passwordStrengthScore - 1, 0)];
   // The blurred loader covers the request; a failure is shown only after it has cleared.
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -83,18 +97,50 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
           <>
             {isSignup && <Field label="Full name" value={fullName} onChangeText={setFullName} />}
             <Field label="Email address" value={email} onChangeText={setEmail} keyboardType="email-address" placeholder="you@gmail.com" />
-            <Field label="Password" value={password} onChangeText={setPassword} secure maxLength={128} />
+            <View style={{ gap: 4 }}>
+              <Text style={[s.body, { fontWeight: '600' }]}>Password</Text>
+              <View style={{ position: 'relative', justifyContent: 'center' }}>
+                <TextInput
+                  style={[s.input, { paddingRight: 54 }]}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  maxLength={128}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType={isSignup ? 'newPassword' : 'password'}
+                  autoComplete={isSignup ? 'new-password' : 'current-password'}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                  onPress={() => setShowPassword((visible) => !visible)}
+                  style={{ position: 'absolute', right: 4, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                  hitSlop={4}
+                >
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={22} color={colors.muted} />
+                </Pressable>
+              </View>
+            </View>
+            {isSignup && password.length > 0 && (
+              <View accessibilityLabel={`Password strength: ${passwordStrength.label}`} style={{ gap: 4 }}>
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  {[0, 1, 2, 3].map((segment) => (
+                    <View key={segment} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: segment < passwordStrengthScore ? passwordStrength.color : colors.border }} />
+                  ))}
+                </View>
+                <Text style={[s.muted, { color: passwordStrength.color }]}>Password strength: {passwordStrength.label}</Text>
+              </View>
+            )}
             {!isSignup && (
               <LinkText align="right" compact onPress={() => router.push('/forgot-password')}>Forgot password?</LinkText>
             )}
             {isSignup && (
               <>
-                <Text style={s.muted}>Use at least 8 characters for your password.</Text>
                 <Dropdown label="Country" value={country} onChange={setCountry} options={[...COUNTRIES]} />
                 <Dropdown label="I am a…" value={role} onChange={setRole} options={[...ROLES]} />
                 <Field label="Referral code (optional)" value={referral} onChangeText={(v) => setReferral(v.toUpperCase())} placeholder="AJO-XXXXXX" maxLength={20} />
                 {role === 'COLLECTOR' && <Text style={s.muted}>Collector accounts must be approved by the platform before creating groups.</Text>}
-                <Text style={s.muted}>You can use the app without a phone number. Phone-based SMS and USSD features require one.</Text>
               </>
             )}
             <Button
