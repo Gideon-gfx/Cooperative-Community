@@ -110,6 +110,39 @@ export async function createVerifiedPhoneUser(input: {
   return asUser(created);
 }
 
+export async function createEmailUser(input: {
+  email: string;
+  passwordHash: string;
+  fullName: string;
+  role: User['role'];
+  country: string;
+  referredById?: string;
+}): Promise<User> {
+  const now = new Date();
+  const result = await (await users()).insertOne({
+    email: input.email,
+    passwordHash: input.passwordHash,
+    fullName: input.fullName,
+    role: input.role,
+    country: input.country,
+    ...(input.referredById ? { referredById: objectId(input.referredById) } : {}),
+    memberStatus: 'CLEAN',
+    walletBalance: 0,
+    isVerified: false,
+    collectorApproved: false,
+    preferredLanguage: 'EN',
+    reminderHour: 8,
+    pinMustChange: false,
+    pinFailedCount: 0,
+    accountType: 'SELF',
+    createdAt: now,
+    updatedAt: now,
+  });
+  const created = await (await users()).findOne({ _id: result.insertedId });
+  if (!created) throw new Error('Created user could not be read back from MongoDB');
+  return asUser(created);
+}
+
 export async function updateUserById(id: string, changes: UserChanges): Promise<User | null> {
   const collection = await users();
   const _id = objectId(id);

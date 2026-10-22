@@ -12,7 +12,7 @@ import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
 import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
-import { createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone } from '../../lib/mongo-users';
+import { createEmailUser, createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone } from '../../lib/mongo-users';
 import { consumeOtpCode, deleteOtpCode, findOtpCode, incrementOtpAttempts, upsertOtpCode } from '../../lib/mongo-otp';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
@@ -101,18 +101,16 @@ authRouter.post('/register', async (req, res) => {
   }).parse(req.body);
   await ensureEmailUniqueIndex();
   const referredById = await referrerFor(body.referralCode);
-  if (await prisma.user.findFirst({ where: { email: body.email } })) throw new HttpError(409, 'An account with this email already exists');
-  const user = await prisma.user.create({
-    data: {
-      email: body.email,
-      passwordHash: await hashPassword(body.password),
-      fullName: body.fullName,
-      role: body.role,
-      country: body.country,
-      ...(referredById ? { referredById } : {}),
-    },
+  if (await findUserByEmail(body.email)) throw new HttpError(409, 'An account with this email already exists');
+  const user = await createEmailUser({
+    email: body.email,
+    passwordHash: await hashPassword(body.password),
+    fullName: body.fullName,
+    role: body.role,
+    country: body.country,
+    ...(referredById ? { referredById } : {}),
   });
-  await audit(user.id, 'REGISTER_EMAIL', 'User', user.id);
+  await auditNative(user.id, 'REGISTER_EMAIL', 'User', user.id);
   if (user.email) await sendEmail(user.email, 'Welcome to ÀJỌ', `Hi ${user.fullName},\n\nYour ÀJỌ account is ready. You can now sign in and join your community.\n\nIf you did not create this account, please contact support.`);
   res.status(201).json({ token: signToken(user), user: publicUser(user) });
 });
