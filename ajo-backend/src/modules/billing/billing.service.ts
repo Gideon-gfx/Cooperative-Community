@@ -1,7 +1,9 @@
 import crypto from 'crypto';
+import { Long } from 'mongodb';
 import { BillingInterval, CommissionInvoice, FundsEntry, PlanKind, Subscription, SubscriptionInvoice } from '@prisma/client';
 import { decisions } from '../../config/decisions';
 import { prisma } from '../../lib/prisma';
+import { getMongoDb } from '../../lib/mongodb';
 import { HttpError } from '../../lib/errors';
 import { audit } from '../../lib/audit';
 import { koboToNaira } from '../../lib/kobo';
@@ -37,16 +39,40 @@ export async function setPrice(adminId: string, input: { plan: PlanKind; interva
 }
 
 /** First-run prices (naira): organizer 10,000/month, 108,000/year; member plus 2,000/month, 21,600/year. Stored in the DB, editable by an admin. */
+const initialPlanPrices: [PlanKind, BillingInterval, bigint][] = [
+  ['ORGANIZER', 'MONTHLY', 1_000_000n], ['ORGANIZER', 'YEARLY', annualFromMonthly(1_000_000n)],
+  ['MEMBER_PLUS', 'MONTHLY', 200_000n], ['MEMBER_PLUS', 'YEARLY', annualFromMonthly(200_000n)],
+];
+
 export async function seedPlanPrices(): Promise<number> {
-  const seeds: [PlanKind, BillingInterval, bigint][] = [
-    ['ORGANIZER', 'MONTHLY', 1_000_000n], ['ORGANIZER', 'YEARLY', annualFromMonthly(1_000_000n)],
-    ['MEMBER_PLUS', 'MONTHLY', 200_000n], ['MEMBER_PLUS', 'YEARLY', annualFromMonthly(200_000n)],
-  ];
   let n = 0;
-  for (const [plan, interval, amountKobo] of seeds) {
+  for (const [plan, interval, amountKobo] of initialPlanPrices) {
     if (await prisma.planPrice.findFirst({ where: { plan, interval } })) continue;
     await prisma.planPrice.create({ data: { plan, interval, amountKobo, effectiveFrom: new Date(0), effectiveTo: null } });
     n++;
+  }
+  return n;
+}
+
+/** Startup-only seeding avoids the Prisma DNS resolver used by the API's database connector. */
+export async function seedPlanPricesNative(): Promise<number> {
+  let n = 0;
+  const prices = (await getMongoDb()).collection('PlanPrice');
+  for (const [plan, interval, amountKobo] of initialPlanPrices) {
+    const result = await prices.updateOne(
+      { plan, interval },
+      {
+        $setOnInsert: {
+          plan,
+          interval,
+          amountKobo: Long.fromBigInt(amountKobo),
+          effectiveFrom: new Date(0),
+          effectiveTo: null,
+        },
+      },
+      { upsert: true },
+    );
+    if (result.upsertedCount) n++;
   }
   return n;
 }

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ConsentDocType, ConsentDocument, Prisma, TranslationStatus } from '@prisma/client';
 import { decisions } from '../../config/decisions';
 import { prisma } from '../../lib/prisma';
+import { getMongoDb } from '../../lib/mongodb';
 import { HttpError } from '../../lib/errors';
 import { audit } from '../../lib/audit';
 import { assertGroupMember } from '../../lib/access';
@@ -37,6 +38,32 @@ export async function seedConsentDocuments(): Promise<number> {
     if (exists) continue;
     const body = SEED_DOCUMENTS[type];
     await prisma.consentDocument.create({ data: { type, version: 1, language: BASE_LANGUAGE, languageLabel: 'English', bodyMarkdown: body, sha256: sha(body), translationStatus: 'ORIGINAL', supersededAt: null } });
+    created++;
+  }
+  return created;
+}
+
+/** Startup-only seeding avoids the Prisma DNS resolver used by the API's database connector. */
+export async function seedConsentDocumentsNative(): Promise<number> {
+  let created = 0;
+  const documents = (await getMongoDb()).collection('ConsentDocument');
+  for (const type of DOC_TYPES) {
+    const exists = await documents.findOne({ type, language: BASE_LANGUAGE, translationStatus: 'ORIGINAL' });
+    if (exists) continue;
+    const body = SEED_DOCUMENTS[type];
+    const now = new Date();
+    await documents.insertOne({
+      type,
+      version: 1,
+      language: BASE_LANGUAGE,
+      languageLabel: 'English',
+      bodyMarkdown: body,
+      sha256: sha(body),
+      effectiveAt: now,
+      supersededAt: null,
+      translationStatus: 'ORIGINAL',
+      createdAt: now,
+    });
     created++;
   }
   return created;

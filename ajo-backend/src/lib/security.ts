@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { promisify } from 'util';
-import { prisma } from './prisma';
 import { HttpError } from './errors';
+import { findUserById, updateUserById } from './mongo-users';
 
 const MAX_FAILS = 5;
 const LOCK_MINUTES = 15;
@@ -38,21 +38,18 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 /** Verifies a user's PIN with lockout after repeated failures. Throws HttpError on failure. */
 export async function verifyPin(userId: string, pin: unknown): Promise<void> {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await findUserById(userId);
   if (!user) throw new HttpError(404, 'User not found');
   if (!user.pinHash) throw new HttpError(403, 'PIN_REQUIRED: set a 4-digit PIN in Settings first');
   if (user.pinLockedUntil && user.pinLockedUntil > new Date()) throw new HttpError(429, 'Too many wrong PINs. Try again later.');
   if (!isValidPin(pin) || !checkPinHash(pin, user.pinHash)) {
-    const fails = user.pinFailedCount + 1;
-    await prisma.user.update({
-      where: { id: userId },
-      data: fails >= MAX_FAILS
-        ? { pinFailedCount: 0, pinLockedUntil: new Date(Date.now() + LOCK_MINUTES * 60_000) }
-        : { pinFailedCount: fails },
-    });
+    const fails = (user.pinFailedCount ?? 0) + 1;
+    await updateUserById(userId, fails >= MAX_FAILS
+      ? { pinFailedCount: 0, pinLockedUntil: new Date(Date.now() + LOCK_MINUTES * 60_000) }
+      : { pinFailedCount: fails });
     throw new HttpError(401, fails >= MAX_FAILS ? 'Too many wrong PINs. Locked for 15 minutes.' : 'Wrong PIN');
   }
-  if (user.pinFailedCount > 0) await prisma.user.update({ where: { id: userId }, data: { pinFailedCount: 0 } });
+  if (user.pinFailedCount > 0) await updateUserById(userId, { pinFailedCount: 0 });
 }
 
 export const randomPin = () => crypto.randomInt(0, 10000).toString().padStart(4, '0');

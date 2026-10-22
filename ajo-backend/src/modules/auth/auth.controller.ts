@@ -10,10 +10,11 @@ import { COUNTRIES, normalizePhone } from '../../lib/phone';
 import { safeSms } from '../../lib/notify';
 import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
-import { audit } from '../../lib/audit';
+import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
+import { findUserByEmail, findUserById, findUserByPhone } from '../../lib/mongo-users';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
-import { getCollectorStats, getTrust } from '../../services/trust.service';
+import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
 
 export const authRouter = Router();
 
@@ -117,11 +118,11 @@ authRouter.post('/register', async (req, res) => {
 
 authRouter.post('/login-email', async (req, res) => {
   const body = z.object({ email: emailSchema, password: z.string().min(1).max(128) }).parse(req.body);
-  const user = await prisma.user.findFirst({ where: { email: body.email } });
+  const user = await findUserByEmail(body.email);
   if (!user?.passwordHash || !(await verifyPassword(body.password, user.passwordHash))) {
     throw new HttpError(401, 'Wrong email or password');
   }
-  await audit(user.id, 'LOGIN_EMAIL', 'User', user.id);
+  await auditNative(user.id, 'LOGIN_EMAIL', 'User', user.id);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
@@ -275,10 +276,10 @@ authRouter.post('/verify-otp', async (req, res) => {
 authRouter.post('/login-pin', async (req, res) => {
   const body = phoneBody.extend({ pin: z.string() }).parse(req.body);
   const phone = toPhone(body);
-  const user = await prisma.user.findUnique({ where: { phoneNumber: phone } });
+  const user = await findUserByPhone(phone);
   if (!user || !user.pinHash) throw new HttpError(401, 'Wrong phone number or PIN');
   await verifyPin(user.id, body.pin);
-  await audit(user.id, 'LOGIN_PIN', 'User', user.id);
+  await auditNative(user.id, 'LOGIN_PIN', 'User', user.id);
   res.json({ token: signToken(user), user: publicUser(user), mustChangePin: user.pinMustChange });
 });
 
@@ -314,9 +315,9 @@ authRouter.post('/update-profile', authenticate, async (req, res) => {
 });
 
 authRouter.get('/profile', authenticate, async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+  const user = await findUserById(req.user!.id);
   if (!user) throw new HttpError(404, 'User not found');
-  res.json({ user: publicUser(user), trust: await getTrust(user.id), collector: user.role === 'COLLECTOR' ? await getCollectorStats(user.id) : null });
+  res.json({ user: publicUser(user), trust: await getTrustNative(user.id), collector: user.role === 'COLLECTOR' ? await getCollectorStatsNative(user.id) : null });
 });
 
 authRouter.patch('/admin/collectors/:id/approve', authenticate, roleGuard(['ADMIN']), async (req, res) => {

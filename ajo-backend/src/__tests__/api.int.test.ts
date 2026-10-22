@@ -53,11 +53,23 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.close();
   await prisma?.$disconnect();
+  await require('../lib/mongodb').closeMongoConnection();
   await rs?.stop();
 });
 
 describe('HTTP: a collector runs an Àjọ pool end to end', () => {
   let baba: any, ada: any, bola: any, group: any, pool: any, assistedId: string;
+
+  it('initializes startup indexes and seeds through the native MongoDB driver', async () => {
+    const { ensureEmailUniqueIndex } = require('../lib/prisma');
+    const { seedPlanPricesNative } = require('../modules/billing/billing.service');
+    const { seedConsentDocumentsNative } = require('../modules/consent/consent.service');
+    await ensureEmailUniqueIndex();
+    expect(await seedPlanPricesNative()).toBe(4);
+    expect(await seedPlanPricesNative()).toBe(0);
+    expect(await seedConsentDocumentsNative()).toBe(3);
+    expect(await seedConsentDocumentsNative()).toBe(0);
+  });
 
   it('rejects bad input and unauthenticated calls', async () => {
     expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '12345' })).status).toBe(400);
