@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { User, UserRole } from '@prisma/client';
+import { User } from '@prisma/client';
 import { ensureEmailUniqueIndex, prisma } from '../../lib/prisma';
 import { config } from '../../lib/config';
 import { HttpError } from '../../lib/errors';
@@ -12,8 +12,7 @@ import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
 import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
-import { createEmailUser, createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone, updateUserById } from '../../lib/mongo-users';
-import { consumeOtpCode, deleteOtpCode, findOtpCode, incrementOtpAttempts, upsertOtpCode } from '../../lib/mongo-otp';
+import { createEmailUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, getReferralSummaryNative, setReferralCodeIfMissingNative, updateUserById } from '../../lib/mongo-users';
 import { consumePasswordResetCode, deletePasswordResetCode, findPasswordResetCode, incrementPasswordResetAttempts, upsertPasswordResetCode } from '../../lib/mongo-password-reset';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
@@ -23,8 +22,6 @@ export const authRouter = Router();
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_MS = 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
-
-const hashOtp = (phone: string, otp: string) => crypto.createHash('sha256').update(`${phone}:${otp}:${config.jwtSecret}`).digest('hex');
 
 async function sendAuthSms(to: string, message: string): Promise<void> {
   try {
@@ -66,51 +63,66 @@ async function referrerFor(code?: string): Promise<string | undefined> {
   return ownerId;
 }
 
-async function referralSummary(userId: string) {
-  const [me, count] = await Promise.all([prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { referralCode: true } }), prisma.user.count({ where: { referredById: userId } })]);
-  return { code: me.referralCode ?? null, referred: count };
-}
-
-authRouter.get('/referral', authenticate, async (req, res) => res.json(await referralSummary(req.user!.id)));
+authRouter.get('/referral', authenticate, async (req, res) => {
+  res.json(await getReferralSummaryNative(req.user!.id));
+});
 
 /** Makes this person's referral code the first time, and gives the same one back every time after. */
 authRouter.post('/referral-code', authenticate, async (req, res) => {
   await ensureEmailUniqueIndex();
-  const existing = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { referralCode: true } });
-  if (!existing.referralCode) {
-    for (let attempt = 0; attempt < 8; attempt++) {
-      try {
-        const done = await prisma.user.updateMany({ where: { id: req.user!.id, OR: [{ referralCode: null }, { referralCode: { isSet: false } }] }, data: { referralCode: newReferralCode() } });
-        if (done.count >= 0) break;
-      } catch (e) {
-        if ((e as { code?: string }).code !== 'P2002') throw e; // a code clash: try another
+  let created = false;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const current = await findUserById(req.user!.id);
+    if (!current) throw new HttpError(404, 'User not found');
+    if (current.referralCode) break;
+
+    try {
+      if (await setReferralCodeIfMissingNative(req.user!.id, newReferralCode())) {
+        created = true;
+        break;
       }
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
     }
-    await audit(req.user!.id, 'REFERRAL_CODE_CREATED', 'User', req.user!.id);
   }
-  res.json(await referralSummary(req.user!.id));
+  const summary = await getReferralSummaryNative(req.user!.id);
+  if (!summary.code) throw new Error('Could not assign a unique referral code after several attempts');
+  if (created) {
+    await auditNative(req.user!.id, 'REFERRAL_CODE_CREATED', 'User', req.user!.id);
+  }
+  res.json(summary);
 });
 
 authRouter.post('/register', async (req, res) => {
   const body = z.object({
     email: emailSchema,
+    phoneNumber: z.string().trim().min(7).max(20),
     password: passwordSchema,
     fullName: z.string().trim().min(2).max(100),
     role: z.enum(['MEMBER', 'COLLECTOR', 'TRANSPORTER']).default('MEMBER'),
     country: countrySchema,
     referralCode: z.string().trim().max(20).optional(),
   }).parse(req.body);
+  const phoneNumber = toPhone({ phoneNumber: body.phoneNumber, country: body.country });
   await ensureEmailUniqueIndex();
   const referredById = await referrerFor(body.referralCode);
   if (await findUserByEmail(body.email)) throw new HttpError(409, 'An account with this email already exists');
-  const user = await createEmailUser({
-    email: body.email,
-    passwordHash: await hashPassword(body.password),
-    fullName: body.fullName,
-    role: body.role,
-    country: body.country,
-    ...(referredById ? { referredById } : {}),
-  });
+  if (await findUserByPhone(phoneNumber)) throw new HttpError(409, 'An account with this phone number already exists');
+  let user: User;
+  try {
+    user = await createEmailUser({
+      email: body.email,
+      phoneNumber,
+      passwordHash: await hashPassword(body.password),
+      fullName: body.fullName,
+      role: body.role,
+      country: body.country,
+      ...(referredById ? { referredById } : {}),
+    });
+  } catch (error) {
+    if ((error as { code?: number }).code === 11000) throw new HttpError(409, 'An account with this email or phone number already exists');
+    throw error;
+  }
   await auditNative(user.id, 'REGISTER_EMAIL', 'User', user.id);
   if (user.email) await sendEmail(user.email, 'Welcome to ÀJỌ', `Hi ${user.fullName},\n\nYour ÀJỌ account is ready. You can now sign in and join your community.\n\nIf you did not create this account, please contact support.`);
   res.status(201).json({ token: signToken(user), user: publicUser(user) });
@@ -125,6 +137,12 @@ authRouter.post('/login-email', async (req, res) => {
   await auditNative(user.id, 'LOGIN_EMAIL', 'User', user.id);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
+
+for (const path of ['/request-otp', '/verify-otp', '/login-pin']) {
+  authRouter.all(path, (_req, res) => {
+    res.status(410).json({ error: 'Phone sign-in is no longer available. Please use email and password.' });
+  });
+}
 
 const resetHash = (userId: string, code: string) => crypto.createHash('sha256').update(`reset:${userId}:${code}:${config.jwtSecret}`).digest('hex');
 
@@ -229,73 +247,6 @@ authRouter.post('/reset-pin', async (req, res) => {
   }
   await auditNative(user.id, 'PIN_RESET', 'User', user.id);
   res.json({ success: true });
-});
-
-authRouter.post('/request-otp', async (req, res) => {
-  const phone = toPhone(phoneBody.parse(req.body));
-  const existing = await findOtpCode(phone);
-  if (existing && Date.now() - existing.createdAt.getTime() < OTP_RESEND_MS) throw new HttpError(429, 'Please wait a minute before asking for another code');
-  const otp = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  const data = { codeHash: hashOtp(phone, otp), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
-  await upsertOtpCode({ phoneNumber: phone, ...data });
-  try {
-    await sendAuthSms(phone, `Your ÀJỌ verification code is ${otp}. It expires in 10 minutes. Never share it.`);
-  } catch (error) {
-    await deleteOtpCode(phone, data.codeHash);
-    throw error;
-  }
-  res.json({ success: true });
-});
-
-authRouter.post('/verify-otp', async (req, res) => {
-  const body = phoneBody
-    .extend({
-      otp: z.string().length(6),
-      fullName: z.string().min(2).optional(),
-      role: z.enum(['MEMBER', 'COLLECTOR', 'TRANSPORTER']).default('MEMBER'),
-      referralCode: z.string().trim().max(20).optional(),
-    })
-    .parse(req.body);
-  const phone = toPhone(body);
-
-  const entry = await findOtpCode(phone);
-  if (!entry || entry.expiresAt < new Date() || entry.attempts >= MAX_OTP_ATTEMPTS) throw new HttpError(400, 'Invalid or expired code');
-  const a = Buffer.from(entry.codeHash);
-  const b = Buffer.from(hashOtp(phone, body.otp));
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    await incrementOtpAttempts(entry.id, MAX_OTP_ATTEMPTS);
-    throw new HttpError(400, 'Invalid or expired code');
-  }
-  if (!(await consumeOtpCode(entry.id, entry.codeHash, new Date(), MAX_OTP_ATTEMPTS))) {
-    throw new HttpError(400, 'Invalid or expired code');
-  }
-
-  const existing = await findUserByPhone(phone);
-  const referredById = existing ? undefined : await referrerFor(body.referralCode);
-  if (!existing && !body.fullName) throw new HttpError(400, 'fullName is required for new accounts');
-  const user = existing
-    ? await markUserVerifiedByPhone(phone)
-    : await createVerifiedPhoneUser({
-        phoneNumber: phone,
-        fullName: body.fullName!,
-        role: body.role as UserRole,
-        country: body.country,
-        ...(referredById ? { referredById } : {}),
-      });
-  if (!user) throw new HttpError(404, 'User not found');
-  await auditNative(user.id, 'LOGIN_OTP', 'User', user.id);
-  res.json({ token: signToken(user), user: publicUser(user) });
-});
-
-/** Sign in with phone + PIN (for members whose collector created the account, and to save SMS costs). */
-authRouter.post('/login-pin', async (req, res) => {
-  const body = phoneBody.extend({ pin: z.string() }).parse(req.body);
-  const phone = toPhone(body);
-  const user = await findUserByPhone(phone);
-  if (!user || !user.pinHash) throw new HttpError(401, 'Wrong phone number or PIN');
-  await verifyPin(user.id, body.pin);
-  await auditNative(user.id, 'LOGIN_PIN', 'User', user.id);
-  res.json({ token: signToken(user), user: publicUser(user), mustChangePin: user.pinMustChange });
 });
 
 authRouter.post('/set-pin', authenticate, async (req, res) => {

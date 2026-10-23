@@ -18,7 +18,7 @@ npm run dev            # API on :4000
 
 cd ajo-mobile && npx expo start --port 8082   # scan with Expo Go (same Wi‑Fi)
 ```
-Without `TERMII_API_KEY`, SMS texts (including OTP codes) are printed in the backend terminal.
+SMS delivery for notifications and account recovery requires `TERMII_API_KEY`. Account creation does not send a phone verification code.
 
 ## iOS push notifications
 The iOS app uses bundle ID `com.cooperativecommunity.ajo`. Push notifications are opt-in from **Settings** and cover
@@ -38,7 +38,7 @@ npx eas-cli@latest build --platform ios --profile development
 APNs push credentials; EAS can manage those credentials during the build. Use that development build (not Expo Go) to
 test notifications. The device must be signed in, opt in on the Settings screen, and be able to reach the backend API.
 
-The web and mobile apps support phone sign-in with an SMS code or PIN, and email-address/password registration and sign-in (passwords must be at least 8 characters). Email accounts do not require a phone number; phone-based SMS and USSD features need one. Email/password sign-in does not verify ownership of the email inbox and is not Google OAuth.
+The web and mobile apps use email-address/password registration and sign-in (passwords must be at least 8 characters). Registration requires a phone number and country selection, but does not send a verification code. Phone numbers are collected as contact details; email/password sign-in does not verify ownership of the email inbox and is not Google OAuth.
 
 ## Tests
 `npm test` (unit, fast) and `npm run test:int` (real services against an in-memory MongoDB replica set; first run downloads ~60 MB).

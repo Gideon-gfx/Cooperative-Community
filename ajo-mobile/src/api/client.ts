@@ -32,9 +32,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
-    // A wrong PIN is also a 401, but it must not log the user out.
-    const wrongPin = error.config?.url?.includes('/login-pin') || /PIN/i.test(error.response?.data?.error ?? '');
-    if (error.response?.status === 401 && token && !wrongPin) {
+    if (error.response?.status === 401 && token) {
       await Promise.all([SecureStore.deleteItemAsync(TOKEN_KEY), SecureStore.deleteItemAsync(USER_KEY)]);
       setToken(null);
       onUnauthorized();

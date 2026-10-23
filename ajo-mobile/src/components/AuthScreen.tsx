@@ -24,16 +24,12 @@ type AuthFlow = 'login' | 'signup';
 
 export function AuthScreen({ flow }: { flow: AuthFlow }) {
   const isSignup = flow === 'signup';
-  const [mode, setMode] = useState<'otp' | 'pin' | 'email'>(isSignup ? 'otp' : 'pin');
   const [role, setRole] = useState<string>('MEMBER');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [sentTo, setSentTo] = useState(false);
-  const [otp, setOtp] = useState('');
   const [fullName, setFullName] = useState('');
-  const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [country, setCountry] = useState<'NG' | 'GH' | 'KE'>('NG');
   const [referral, setReferral] = useState('');
@@ -61,27 +57,10 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
     if (failure) Alert.alert('Error', errMsg(failure));
   };
 
-  const requestOtp = () => run(async () => {
-    await api.post('/auth/request-otp', { phoneNumber: phone, country });
-    setSentTo(true);
-  });
-  const verify = () => run(async () => {
-    const body = isSignup
-      ? { phoneNumber: phone, country, otp, fullName: fullName.trim(), role, ...(referral.trim() ? { referralCode: referral.trim() } : {}) }
-      : { phoneNumber: phone, country, otp };
-    const { data } = await api.post('/auth/verify-otp', body);
-    await login(data.token, data.user);
-    router.replace('/dashboard');
-  });
-  const loginPin = () => run(async () => {
-    const { data } = await api.post('/auth/login-pin', { phoneNumber: phone, country, pin });
-    await login(data.token, data.user);
-    router.replace(data.mustChangePin ? { pathname: '/settings', params: { mustChange: '1' } } : '/dashboard');
-  });
   const submitEmail = () => run(async () => {
     const path = isSignup ? '/auth/register' : '/auth/login-email';
     const body = isSignup
-      ? { email: email.trim(), password, fullName: fullName.trim(), role, country, ...(referral.trim() ? { referralCode: referral.trim() } : {}) }
+      ? { email: email.trim(), password, fullName: fullName.trim(), phoneNumber: phone.trim(), role, country, ...(referral.trim() ? { referralCode: referral.trim() } : {}) }
       : { email: email.trim(), password };
     const { data } = await api.post(path, body);
     await login(data.token, data.user);
@@ -93,8 +72,7 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
       <Text style={[s.h1, { color: colors.primary, textAlign: 'center' }]}>ÀJỌ</Text>
       <Text style={[s.h2, { textAlign: 'center' }]}>{isSignup ? 'Create your account' : 'Log in'}</Text>
       <Card style={{ gap: 12 }}>
-        {mode === 'email' ? (
-          <>
+        <>
             {isSignup && <Field label="Full name" value={fullName} onChangeText={setFullName} />}
             <Field label="Email address" value={email} onChangeText={setEmail} keyboardType="email-address" placeholder="you@gmail.com" />
             <View style={{ gap: 4 }}>
@@ -138,53 +116,20 @@ export function AuthScreen({ flow }: { flow: AuthFlow }) {
             {isSignup && (
               <>
                 <Dropdown label="Country" value={country} onChange={setCountry} options={[...COUNTRIES]} />
+                <PhoneField label="Phone number" dial={DIAL[country]} value={phone} onChangeText={setPhone} placeholder="803 123 4567" />
                 <Dropdown label="I am a…" value={role} onChange={setRole} options={[...ROLES]} />
                 <Field label="Referral code (optional)" value={referral} onChangeText={(v) => setReferral(v.toUpperCase())} placeholder="AJO-XXXXXX" maxLength={20} />
                 {role === 'COLLECTOR' && <Text style={s.muted}>Collector accounts must be approved by the platform before creating groups.</Text>}
+                <Text style={s.muted}>No SMS verification code is needed.</Text>
               </>
             )}
             <Button
               title={isSignup ? 'Create account' : 'Log in'}
               onPress={submitEmail}
               loading={busy}
-              disabled={!email.trim() || !password || (isSignup && (fullName.trim().length < 2 || password.length < 8))}
+              disabled={!email.trim() || !password || (isSignup && (fullName.trim().length < 2 || password.length < 8 || phone.replace(/\D/g, '').length < 7))}
             />
-            {!isSignup && <LinkText onPress={() => setMode('pin')}>Use phone number instead</LinkText>}
-          </>
-        ) : mode === 'pin' ? (
-          <>
-            <Dropdown label="Country" value={country} onChange={setCountry} options={[...COUNTRIES]} />
-            <PhoneField label="Phone number" dial={DIAL[country]} value={phone} onChangeText={setPhone} placeholder="803 123 4567" />
-            <Field label="PIN" value={pin} onChangeText={setPin} keyboardType="number-pad" secure maxLength={4} />
-            <LinkText align="right" compact onPress={() => { setMode('otp'); setSentTo(false); }}>Forgot PIN? Use SMS code</LinkText>
-            <Button title="Log in" onPress={loginPin} loading={busy} disabled={pin.length !== 4 || phone.replace(/\D/g, '').length < 7} />
-            <LinkText onPress={() => setMode('email')}>I used an email account</LinkText>
-          </>
-        ) : (
-          <>
-            {isSignup && <Field label="Full name" value={fullName} onChangeText={setFullName} />}
-            {isSignup && <Dropdown label="Country" value={country} onChange={setCountry} options={[...COUNTRIES]} />}
-            <PhoneField label="Phone number" dial={DIAL[country]} value={phone} onChangeText={setPhone} placeholder="803 123 4567" />
-            {isSignup && !sentTo && (
-              <>
-                <Dropdown label="I am a…" value={role} onChange={setRole} options={[...ROLES]} />
-                <Field label="Referral code (optional)" value={referral} onChangeText={(v) => setReferral(v.toUpperCase())} placeholder="AJO-XXXXXX" maxLength={20} />
-                {role === 'COLLECTOR' && <Text style={s.muted}>Collector accounts must be approved by the platform before creating groups.</Text>}
-              </>
-            )}
-
-            {!sentTo ? (
-              <Button title="Send code" onPress={requestOtp} loading={busy} disabled={phone.replace(/\D/g, '').length < 7 || (isSignup && fullName.trim().length < 2)} />
-            ) : (
-              <View style={{ gap: 12 }}>
-                <Field label="6-digit code" value={otp} onChangeText={setOtp} keyboardType="number-pad" maxLength={6} />
-                <Button title={isSignup ? 'Create account' : 'Verify & continue'} onPress={verify} loading={busy} disabled={otp.length !== 6 || (isSignup && fullName.trim().length < 2)} />
-                <Button title="Use a different number" variant="outline" onPress={() => { setSentTo(false); setOtp(''); }} />
-              </View>
-            )}
-          </>
-        )}
-        {isSignup && <LinkText onPress={() => { setMode(mode === 'email' ? 'otp' : 'email'); setSentTo(false); }}>{mode === 'email' ? 'Use phone number instead' : 'Use email instead'}</LinkText>}
+        </>
       </Card>
       <LinkText onPress={() => router.push(isSignup ? '/login' : '/signup')}>{isSignup ? 'Already have an account? Log in' : "Don't have an account? Create one"}</LinkText>
       <LegalLinks />

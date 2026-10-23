@@ -29,14 +29,22 @@ async function call(method: string, url: string, token?: string, body?: unknown,
   return { status: res.status, json, text };
 }
 
-/** Real login: request an OTP, read it from the (mocked) SMS, verify it. */
+/** Create an account with email/password and a contact phone number, then sign in. */
 async function login(phone: string, fullName: string, role = 'MEMBER') {
-  expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: phone })).status).toBe(200);
-  const code = sms.filter((m) => m.to === phone.replace(/^0/, '+234')).pop()!.msg.match(/code is (\d{6})/)![1];
-  const r = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: phone, otp: code, fullName, role });
-  expect(r.status).toBe(200);
+  const email = `test-${phone.replace(/\D/g, '')}@example.com`;
+  const r = await call('POST', '/api/auth/register', undefined, {
+    email,
+    phoneNumber: phone,
+    password: 'a-long-test-password',
+    fullName,
+    role,
+    country: 'NG',
+  });
+  expect(r.status).toBe(201);
+  const signedIn = await call('POST', '/api/auth/login-email', undefined, { email, password: 'a-long-test-password' });
+  expect(signedIn.status).toBe(200);
   expect(r.json.user.pinHash).toBeUndefined(); // never leak the hash
-  return { token: r.json.token as string, user: r.json.user };
+  return { token: signedIn.json.token as string, user: signedIn.json.user };
 }
 
 beforeAll(async () => {
@@ -72,38 +80,32 @@ describe('HTTP: a collector runs an Àjọ pool end to end', () => {
   });
 
   it('rejects bad input and unauthenticated calls', async () => {
-    expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '12345' })).status).toBe(400);
+    expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '12345' })).status).toBe(410);
     expect((await call('GET', '/api/auth/profile')).status).toBe(401);
     expect((await call('GET', '/api/ajo/my-pools', 'bad.token.here')).status).toBe(401);
   });
 
-  it('OTP login with real hashing; wrong code fails; resend is throttled', async () => {
+  it('requires email/password for sign-in and accepts phone registration without sending OTP', async () => {
     baba = await login('08011111111', 'Baba Alajo', 'COLLECTOR');
     ada = await login('08022222222', 'Ada Member');
     bola = await login('08033333333', 'Bola Member');
-    expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '08088888888' })).status).toBe(200);
-    expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '08088888888' })).status).toBe(429); // resend too soon
-    const otp = sms.filter((m) => m.to === '+2348088888888').pop()!.msg.match(/code is (\d{6})/)![1];
-    const wrongOtp = otp === '000000' ? '000001' : '000000';
-    const bad = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp: wrongOtp, fullName: 'Otp User' });
-    expect(bad.status).toBe(400);
-    const mongo = await require('../lib/mongodb').getMongoDb();
-    expect((await mongo.collection('OtpCode').findOne({ phoneNumber: '+2348088888888' }))?.attempts).toBe(1);
-    const verified = await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp, fullName: 'Otp User' });
-    expect(verified.status).toBe(200);
-    expect(await mongo.collection('OtpCode').findOne({ phoneNumber: '+2348088888888' })).toBeNull();
-    expect((await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp, fullName: 'Otp User' })).status).toBe(400);
+    expect((await call('POST', '/api/auth/request-otp', undefined, { phoneNumber: '08088888888' })).status).toBe(410);
+    expect((await call('POST', '/api/auth/verify-otp', undefined, { phoneNumber: '08088888888', otp: '123456' })).status).toBe(410);
+    expect((await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08088888888', pin: '1234' })).status).toBe(410);
+    expect(sms).toHaveLength(0);
   });
 
-  it('registers and signs in with an email and password without a phone number', async () => {
-    const credentials = { email: 'Ajo.Member@gmail.com', password: 'a-long-test-password', fullName: 'Ajo Member', role: 'MEMBER' };
+  it('registers and signs in with email/password and a phone contact without OTP', async () => {
+    const credentials = { email: 'Ajo.Member@gmail.com', phoneNumber: '08055550111', password: 'a-long-test-password', fullName: 'Ajo Member', role: 'MEMBER', country: 'NG' };
+    expect((await call('POST', '/api/auth/register', undefined, { ...credentials, phoneNumber: '' })).status).toBe(400);
     const registered = await call('POST', '/api/auth/register', undefined, credentials);
     expect(registered.status).toBe(201);
-    expect(registered.json.user).toMatchObject({ email: 'ajo.member@gmail.com', phoneNumber: null, fullName: 'Ajo Member' });
+    expect(registered.json.user).toMatchObject({ email: 'ajo.member@gmail.com', phoneNumber: '+2348055550111', fullName: 'Ajo Member' });
     expect(mails.filter((mail) => mail.to === 'ajo.member@gmail.com').pop()?.text).toContain('Your ÀJỌ account is ready');
     expect(registered.json.user.passwordHash).toBeUndefined();
     expect(registered.json.user.pinHash).toBeUndefined();
     expect((await call('POST', '/api/auth/register', undefined, credentials)).status).toBe(409);
+    expect((await call('POST', '/api/auth/register', undefined, { ...credentials, email: 'other@gmail.com' })).status).toBe(409);
     expect((await call('POST', '/api/auth/login-email', undefined, { email: credentials.email, password: 'wrong-password' })).status).toBe(401);
     const loggedIn = await call('POST', '/api/auth/login-email', undefined, { email: 'ajo.member@gmail.com', password: credentials.password });
     expect(loggedIn.status).toBe(200);
@@ -122,9 +124,9 @@ describe('HTTP: a collector runs an Àjọ pool end to end', () => {
     const made = await call('POST', '/api/auth/referral-code', token);
     expect(made.json.code).toMatch(/^AJO-[A-Z2-9]{6}$/);
     expect((await call('POST', '/api/auth/referral-code', token)).json.code).toBe(made.json.code); // same code every time
-    const bad = await call('POST', '/api/auth/register', undefined, { email: 'ref.bad@gmail.com', password: 'a-long-test-password', fullName: 'Typo', referralCode: 'AJO-NOPE99' });
+    const bad = await call('POST', '/api/auth/register', undefined, { email: 'ref.bad@gmail.com', phoneNumber: '08055550121', password: 'a-long-test-password', fullName: 'Typo', referralCode: 'AJO-NOPE99' });
     expect(bad.status).toBe(400);
-    const ok = await call('POST', '/api/auth/register', undefined, { email: 'ref.ok@gmail.com', password: 'a-long-test-password', fullName: 'Friend', referralCode: ` ${made.json.code.toLowerCase()} ` });
+    const ok = await call('POST', '/api/auth/register', undefined, { email: 'ref.ok@gmail.com', phoneNumber: '08055550122', password: 'a-long-test-password', fullName: 'Friend', referralCode: ` ${made.json.code.toLowerCase()} ` });
     expect(ok.status).toBe(201);
     expect((await prisma.user.findUnique({ where: { id: ok.json.user.id } })).referredById).toBe(owner.id);
     expect((await call('GET', '/api/auth/referral', token)).json).toEqual({ code: made.json.code, referred: 1 });
@@ -141,7 +143,7 @@ describe('HTTP: a collector runs an Àjọ pool end to end', () => {
     expect((await call('POST', '/api/auth/reset-pin', undefined, { phoneNumber: '08055550123', country: 'NG', code, newPin: '1111' })).status).toBe(400); // too easy
     expect((await call('POST', '/api/auth/reset-pin', undefined, { phoneNumber: '08055550123', country: 'NG', code, newPin: '7391' })).status).toBe(200);
     expect((await call('POST', '/api/auth/reset-pin', undefined, { phoneNumber: '08055550123', country: 'NG', code, newPin: '7392' })).status).toBe(400); // used once
-    expect((await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08055550123', country: 'NG', pin: '7391' })).status).toBe(200);
+    expect((await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08055550123', country: 'NG', pin: '7391' })).status).toBe(410);
     expect((await prisma.user.findUnique({ where: { id: u.id } })).pinFailedCount).toBe(0);
   });
 
@@ -198,10 +200,10 @@ describe('HTTP: a collector runs an Àjọ pool end to end', () => {
     expect((await dial('')).text).toMatch(/^CON/);
     expect((await dial(`${tempPin}*7351`)).text).toMatch(/^END/);
     expect((await dial('')).text).toMatch(/^CON/); // now shows the menu
-    // …and can sign in to the app with phone + PIN
+    // The old phone + PIN sign-in endpoint is no longer available.
     const li = await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08055555555', pin: '7351' });
-    expect(li.status).toBe(200);
-    expect((await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08055555555', pin: '0000' })).status).toBe(401);
+    expect(li.status).toBe(410);
+    expect((await call('POST', '/api/auth/login-pin', undefined, { phoneNumber: '08055555555', pin: '0000' })).status).toBe(410);
   });
 
   it('creates a pool (preserved order, 1 hand each) via the API', async () => {

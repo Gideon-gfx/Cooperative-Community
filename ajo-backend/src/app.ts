@@ -38,14 +38,11 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as unkno
 app.use(express.urlencoded({ extended: false })); // USSD providers post form-encoded bodies
 if (process.env.NODE_ENV !== 'test') {
   app.use('/api/', rateLimit({ windowMs: 60_000, limit: 300 }));
-  app.use('/api/auth/request-otp', rateLimit({ windowMs: 10 * 60_000, limit: 5 }));
-  app.use('/api/auth/verify-otp', rateLimit({ windowMs: 10 * 60_000, limit: 10 }));
   app.use('/api/auth/forgot-password', rateLimit({ windowMs: 10 * 60_000, limit: 5 }));
   app.use('/api/auth/forgot-pin', rateLimit({ windowMs: 10 * 60_000, limit: 5 }));
   app.use('/api/auth/verify-reset-code', rateLimit({ windowMs: 10 * 60_000, limit: 15 }));
   app.use('/api/auth/reset-pin', rateLimit({ windowMs: 10 * 60_000, limit: 10 }));
   app.use('/api/auth/reset-password', rateLimit({ windowMs: 10 * 60_000, limit: 10 }));
-  app.use('/api/auth/login-pin', rateLimit({ windowMs: 10 * 60_000, limit: 20 }));
   app.use('/api/auth/register', rateLimit({ windowMs: 10 * 60_000, limit: 5 }));
   app.use('/api/auth/login-email', rateLimit({ windowMs: 10 * 60_000, limit: 20 }));
 }

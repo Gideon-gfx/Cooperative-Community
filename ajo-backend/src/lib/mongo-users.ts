@@ -72,6 +72,28 @@ export async function findUserIdByReferralCode(referralCode: string): Promise<st
   return document?._id.toHexString() ?? null;
 }
 
+export async function getReferralSummaryNative(userId: string): Promise<{ code: string | null; referred: number }> {
+  const collection = await users();
+  const _id = objectId(userId);
+  const [user, referred] = await Promise.all([
+    collection.findOne({ _id }, { projection: { referralCode: 1 } }),
+    collection.countDocuments({ referredById: _id }),
+  ]);
+  if (!user) throw new Error('User not found while loading referral summary');
+  return { code: user.referralCode ?? null, referred };
+}
+
+export async function setReferralCodeIfMissingNative(userId: string, referralCode: string): Promise<boolean> {
+  const result = await (await users()).updateOne(
+    {
+      _id: objectId(userId),
+      $or: [{ referralCode: null }, { referralCode: { $exists: false } }],
+    },
+    { $set: { referralCode, updatedAt: new Date() } },
+  );
+  return result.modifiedCount === 1;
+}
+
 export async function markUserVerifiedByPhone(phoneNumber: string): Promise<User | null> {
   const collection = await users();
   await collection.updateOne({ phoneNumber }, { $set: { isVerified: true } });
@@ -112,6 +134,7 @@ export async function createVerifiedPhoneUser(input: {
 
 export async function createEmailUser(input: {
   email: string;
+  phoneNumber: string;
   passwordHash: string;
   fullName: string;
   role: User['role'];
@@ -121,6 +144,7 @@ export async function createEmailUser(input: {
   const now = new Date();
   const result = await (await users()).insertOne({
     email: input.email,
+    phoneNumber: input.phoneNumber,
     passwordHash: input.passwordHash,
     fullName: input.fullName,
     role: input.role,
