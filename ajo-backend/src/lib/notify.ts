@@ -7,7 +7,7 @@ export async function safeSms(to: string | null | undefined, message: string): P
   try {
     await sendSms(to, message);
   } catch (err) {
-    console.error(`[sms] failed to ${to}:`, (err as Error).message);
+    console.error('[sms] delivery failed:', (err as Error).message);
   }
 }
 

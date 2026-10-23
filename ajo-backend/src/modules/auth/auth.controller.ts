@@ -12,8 +12,9 @@ import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
 import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
-import { createEmailUser, createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone } from '../../lib/mongo-users';
+import { createEmailUser, createVerifiedPhoneUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, markUserVerifiedByPhone, updateUserById } from '../../lib/mongo-users';
 import { consumeOtpCode, deleteOtpCode, findOtpCode, incrementOtpAttempts, upsertOtpCode } from '../../lib/mongo-otp';
+import { consumePasswordResetCode, deletePasswordResetCode, findPasswordResetCode, incrementPasswordResetAttempts, upsertPasswordResetCode } from '../../lib/mongo-password-reset';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
 
@@ -130,19 +131,19 @@ const resetHash = (userId: string, code: string) => crypto.createHash('sha256').
 /** Only an existing account can ask for a code: anyone else is told so plainly. */
 authRouter.post('/forgot-password', async (req, res) => {
   const body = z.object({ email: emailSchema }).parse(req.body);
-  const user = await prisma.user.findFirst({ where: { email: body.email } });
+  const user = await findUserByEmail(body.email);
   if (!user) throw new HttpError(404, 'We could not find an account with this email. Check the email or create an account.');
   if (!user.passwordHash) throw new HttpError(409, 'This account has no password. Log in with your phone number and PIN instead.');
   {
-    const existing = await prisma.passwordResetCode.findUnique({ where: { userId: user.id } });
+    const existing = await findPasswordResetCode(user.id);
     if (!existing || Date.now() - existing.createdAt.getTime() >= OTP_RESEND_MS) {
       const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
       const data = { codeHash: resetHash(user.id, code), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
-      await prisma.passwordResetCode.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data });
+      await upsertPasswordResetCode({ userId: user.id, ...data });
       const sent = await sendEmail(body.email, 'Your ÀJỌ password reset code', `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email. Never share this code.`);
       if (!sent && !user.phoneNumber && process.env.NODE_ENV === 'production') throw new HttpError(503, 'We could not send the email right now. Please try again later.');
       if (user.phoneNumber) await safeSms(user.phoneNumber, `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. Never share it.`);
-      await audit(user.id, 'PASSWORD_RESET_REQUESTED', 'User', user.id);
+      await auditNative(user.id, 'PASSWORD_RESET_REQUESTED', 'User', user.id);
     }
   }
   res.json({ success: true });
@@ -150,15 +151,17 @@ authRouter.post('/forgot-password', async (req, res) => {
 
 /** Checks a recovery code. With consume=false the code stays usable, so the app can check it on one screen and use it on the next. */
 async function checkResetCode(userId: string, code: string, consume: boolean) {
-  const entry = await prisma.passwordResetCode.findUnique({ where: { userId } });
+  const entry = await findPasswordResetCode(userId);
   if (!entry || entry.expiresAt < new Date() || entry.attempts >= MAX_OTP_ATTEMPTS) throw new HttpError(400, 'Invalid or expired code');
   const a = Buffer.from(entry.codeHash);
   const b = Buffer.from(resetHash(userId, code));
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    await prisma.passwordResetCode.update({ where: { id: entry.id }, data: { attempts: { increment: 1 } } });
+    await incrementPasswordResetAttempts(entry.id, MAX_OTP_ATTEMPTS);
     throw new HttpError(400, 'Invalid or expired code');
   }
-  if (consume) await prisma.passwordResetCode.delete({ where: { id: entry.id } });
+  if (consume && !(await consumePasswordResetCode(userId, entry.codeHash, new Date(), MAX_OTP_ATTEMPTS))) {
+    throw new HttpError(400, 'Invalid or expired code');
+  }
 }
 
 const identity = z.union([
@@ -166,8 +169,8 @@ const identity = z.union([
   phoneBody,
 ]);
 async function userFor(body: z.infer<typeof identity>) {
-  if ('email' in body) return prisma.user.findFirst({ where: { email: body.email } });
-  return prisma.user.findUnique({ where: { phoneNumber: toPhone(body) } });
+  if ('email' in body) return findUserByEmail(body.email);
+  return findUserByPhone(toPhone(body));
 }
 
 authRouter.post('/verify-reset-code', async (req, res) => {
@@ -180,11 +183,13 @@ authRouter.post('/verify-reset-code', async (req, res) => {
 
 authRouter.post('/reset-password', async (req, res) => {
   const body = z.object({ email: emailSchema, code: z.string().length(6), newPassword: passwordSchema }).parse(req.body);
-  const user = await prisma.user.findFirst({ where: { email: body.email } });
+  const user = await findUserByEmail(body.email);
   if (!user) throw new HttpError(400, 'Invalid or expired code');
   await checkResetCode(user.id, body.code, true);
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(body.newPassword) } });
-  await audit(user.id, 'PASSWORD_RESET', 'User', user.id);
+  if (!(await updateUserById(user.id, { passwordHash: await hashPassword(body.newPassword) }))) {
+    throw new Error('User disappeared during password reset');
+  }
+  await auditNative(user.id, 'PASSWORD_RESET', 'User', user.id);
   res.json({ success: true });
 });
 
@@ -192,21 +197,21 @@ authRouter.post('/reset-password', async (req, res) => {
 authRouter.post('/forgot-pin', async (req, res) => {
   const body = phoneBody.parse(req.body);
   const phone = toPhone(body);
-  const user = await prisma.user.findUnique({ where: { phoneNumber: phone } });
+  const user = await findUserByPhone(phone);
   if (!user) throw new HttpError(404, 'We could not find an account with this phone number. Check the number or create an account.');
   {
-    const existing = await prisma.passwordResetCode.findUnique({ where: { userId: user.id } });
+    const existing = await findPasswordResetCode(user.id);
     if (!existing || Date.now() - existing.createdAt.getTime() >= OTP_RESEND_MS) {
       const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
       const data = { codeHash: resetHash(user.id, code), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
-      await prisma.passwordResetCode.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data });
+      await upsertPasswordResetCode({ userId: user.id, ...data });
       try {
         await sendAuthSms(phone, `Your ÀJỌ PIN reset code is ${code}. It expires in 10 minutes. Never share it.`);
       } catch (error) {
-        await prisma.passwordResetCode.deleteMany({ where: { userId: user.id, codeHash: data.codeHash } });
+        await deletePasswordResetCode(user.id, data.codeHash);
         throw error;
       }
-      await audit(user.id, 'PIN_RESET_REQUESTED', 'User', user.id);
+      await auditNative(user.id, 'PIN_RESET_REQUESTED', 'User', user.id);
     }
   }
   res.json({ success: true });
@@ -216,11 +221,13 @@ authRouter.post('/reset-pin', async (req, res) => {
   const body = phoneBody.extend({ code: z.string().length(6), newPin: z.string() }).parse(req.body);
   if (!isValidPin(body.newPin)) throw new HttpError(400, 'PIN must be exactly 4 digits');
   if (/^(\d)\1{3}$/.test(body.newPin) || body.newPin === '1234' || body.newPin === '0123') throw new HttpError(400, 'Choose a PIN that is harder to guess');
-  const user = await prisma.user.findUnique({ where: { phoneNumber: toPhone(body) } });
+  const user = await findUserByPhone(toPhone(body));
   if (!user) throw new HttpError(400, 'Invalid or expired code');
   await checkResetCode(user.id, body.code, true);
-  await prisma.user.update({ where: { id: user.id }, data: { pinHash: hashPin(body.newPin), pinMustChange: false, pinFailedCount: 0, pinLockedUntil: null } });
-  await audit(user.id, 'PIN_RESET', 'User', user.id);
+  if (!(await updateUserById(user.id, { pinHash: hashPin(body.newPin), pinMustChange: false, pinFailedCount: 0, pinLockedUntil: null }))) {
+    throw new Error('User disappeared during PIN reset');
+  }
+  await auditNative(user.id, 'PIN_RESET', 'User', user.id);
   res.json({ success: true });
 });
 

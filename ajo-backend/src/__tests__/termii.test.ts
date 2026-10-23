@@ -63,6 +63,19 @@ describe('Termii SMS delivery', () => {
     await expect(sendSms('+2348012345678', 'test')).rejects.toThrow('TERMII_SENDER_ID is not configured');
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
+
+  it('surfaces a sanitized provider rejection reason without exposing phone numbers', async () => {
+    config.termiiApiKey = 'test-api-key';
+    config.termiiSenderId = 'AJOAPP';
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    mockedAxios.post.mockRejectedValue({
+      response: { status: 422, data: { message: 'Invalid recipient +2348012345678' } },
+    });
+
+    await expect(sendSms('+2348012345678', 'verification message')).rejects.toThrow(
+      'Termii request failed with HTTP 422: Invalid recipient [redacted]',
+    );
+  });
 });
 
 describe('Termii webhook signature verification', () => {
