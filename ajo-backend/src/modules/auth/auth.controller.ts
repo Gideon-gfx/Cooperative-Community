@@ -158,9 +158,13 @@ authRouter.post('/forgot-password', async (req, res) => {
       const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
       const data = { codeHash: resetHash(user.id, code), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
       await upsertPasswordResetCode({ userId: user.id, ...data });
-      const sent = await sendEmail(body.email, 'Your ÀJỌ password reset code', `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email. Never share this code.`);
-      if (!sent && !user.phoneNumber && process.env.NODE_ENV === 'production') throw new HttpError(503, 'We could not send the email right now. Please try again later.');
-      if (user.phoneNumber) await safeSms(user.phoneNumber, `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. Never share it.`);
+      try {
+        const sent = await sendEmail(body.email, 'Your ÀJỌ password reset code', `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email. Never share this code.`);
+        if (!sent) throw new HttpError(503, 'We could not send the email right now. Please try again later.');
+      } catch (error) {
+        await deletePasswordResetCode(user.id, data.codeHash);
+        throw error;
+      }
       await auditNative(user.id, 'PASSWORD_RESET_REQUESTED', 'User', user.id);
     }
   }

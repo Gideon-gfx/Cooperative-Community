@@ -9,7 +9,7 @@ const sms: { to: string; msg: string }[] = [];
 jest.mock('../services/termii.service', () => ({ sendSms: async (to: string, msg: string) => void sms.push({ to, msg }) }));
 
 const mails: { to: string; text: string }[] = [];
-jest.mock('../lib/mailer', () => ({ sendEmail: async (to: string, _s: string, text: string) => void mails.push({ to, text }) }));
+jest.mock('../lib/mailer', () => ({ sendEmail: async (to: string, _s: string, text: string) => { mails.push({ to, text }); return true; } }));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let rs: MongoMemoryReplSet;

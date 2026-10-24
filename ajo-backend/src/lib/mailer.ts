@@ -1,6 +1,10 @@
 import nodemailer from 'nodemailer';
 import { config } from './config';
 
+const SMTP_CONNECTION_TIMEOUT_MS = 5_000;
+const SMTP_GREETING_TIMEOUT_MS = 5_000;
+const SMTP_SOCKET_TIMEOUT_MS = 8_000;
+
 /**
  * Sends a plain email. Two ways, tried in this order:
  *  1. SMTP (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, optional MAIL_FROM). A Gmail address with an App Password works.
@@ -11,9 +15,23 @@ import { config } from './config';
 export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
   try {
     if (config.smtpHost && config.smtpUser && config.smtpPass) {
-      const transport = nodemailer.createTransport({ host: config.smtpHost, port: config.smtpPort, secure: config.smtpPort === 465, auth: { user: config.smtpUser, pass: config.smtpPass } });
-      await transport.sendMail({ from: config.mailFrom || `ÀJỌ <${config.smtpUser}>`, to, subject, text });
-      return true;
+      const transport = nodemailer.createTransport({
+        host: config.smtpHost,
+        port: config.smtpPort,
+        secure: config.smtpPort === 465,
+        auth: { user: config.smtpUser, pass: config.smtpPass },
+        connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+        greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
+        socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
+      });
+      try {
+        await transport.sendMail({ from: config.mailFrom || `ÀJỌ <${config.smtpUser}>`, to, subject, text });
+        return true;
+      } catch (error) {
+        console.error('[mail] SMTP send failed', error instanceof Error ? error.message : String(error));
+      } finally {
+        transport.close();
+      }
     }
     if (config.resendApiKey && config.mailFrom) {
       const res = await fetch('https://api.resend.com/emails', {
