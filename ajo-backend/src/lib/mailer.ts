@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { config } from './config';
+import { brandedEmailHtml } from './email-template';
 
 const SMTP_CONNECTION_TIMEOUT_MS = 5_000;
 const SMTP_GREETING_TIMEOUT_MS = 5_000;
@@ -12,7 +13,7 @@ const SMTP_SOCKET_TIMEOUT_MS = 8_000;
  * With neither set it only logs the message outside production, so a developer can read a reset code in the terminal.
  * It never throws: a mail problem must not break the request. It returns whether the mail was handed over.
  */
-export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
+export async function sendEmail(to: string, subject: string, text: string, html = brandedEmailHtml(subject, text)): Promise<boolean> {
   try {
     if (config.smtpHost && config.smtpUser && config.smtpPass) {
       const transport = nodemailer.createTransport({
@@ -25,7 +26,7 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
         socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
       });
       try {
-        await transport.sendMail({ from: config.mailFrom || `ÀJỌ <${config.smtpUser}>`, to, subject, text });
+        await transport.sendMail({ from: config.mailFrom || `ÀJỌ <${config.smtpUser}>`, to, subject, text, html });
         return true;
       } catch (error) {
         console.error('[mail] SMTP send failed', error instanceof Error ? error.message : String(error));
@@ -37,7 +38,7 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${config.resendApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: config.mailFrom, to, subject, text }),
+        body: JSON.stringify({ from: config.mailFrom, to, subject, text, html }),
       });
       if (!res.ok) console.error('[mail] resend failed', res.status);
       return res.ok;

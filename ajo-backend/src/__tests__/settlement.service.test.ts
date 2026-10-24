@@ -14,7 +14,7 @@ const sms = jest.fn();
 const mockContribute = jest.fn();
 const mockValidate = jest.fn();
 jest.mock('../lib/prisma', () => ({ prisma: db }));
-jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), safeSmsAndEmail: (...a: unknown[]) => a[0] && sms(a[0], a[3]), naira: (n: unknown) => `₦${n}` }));
 jest.mock('../modules/payments/payments.service', () => ({ contribute: (...a: unknown[]) => mockContribute(...a) }));
 jest.mock('../services/monnify.service', () => ({ ...jest.requireActual('../services/monnify.service'), validateBankAccount: (...a: unknown[]) => mockValidate(...a) }));
 jest.mock('../modules/apprenticeship/contracts.service', () => {

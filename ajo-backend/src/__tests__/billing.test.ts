@@ -14,7 +14,7 @@ const mockPrisma: Record<string, any> = {
 const sms = jest.fn();
 const mockMonnify = { verifyTransaction: jest.fn(), initializeTransaction: jest.fn() };
 jest.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
-jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), safeSmsAndEmail: (...a: unknown[]) => a[0] && sms(a[0], a[3]), naira: (n: unknown) => `₦${n}` }));
 jest.mock('../services/monnify.service', () => ({ ...jest.requireActual('../services/monnify.service'), ...mockMonnify }));
 
 import fs from 'fs';

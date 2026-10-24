@@ -2,8 +2,7 @@ import { CycleFrequency, PaymentMethod } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { HttpError } from '../../lib/errors';
 import { assertGroupAdmin } from '../../lib/access';
-import { naira, safeSms } from '../../lib/notify';
-import { sendEmail } from '../../lib/mailer';
+import { naira, safeSmsAndEmail } from '../../lib/notify';
 import { safePush } from '../../services/push.service';
 import { round2 } from '../../lib/money';
 import { audit } from '../../lib/audit';
@@ -125,9 +124,13 @@ export async function createAjoPool(adminId: string, groupId: string, params: Cr
   const firstDue = new Date(Math.max(full.schedules[0].payoutDate.getTime() - 2 * DAY_MS, params.startDate.getTime()));
   for (const u of users) {
     const mine = full.schedules.filter((s) => s.recipientId === u.id).map((s) => fmtDate(s.payoutDate)).join(', ');
-    await safeSms(
+    const message =
+      `Your Àjọ pool ${params.title} is ready! You collect on ${mine}. Contribute ${naira(params.amountPerMember * (hands[u.id] ?? 1), group.currency)} by ${fmtDate(firstDue)}. Your collector holds the money and every payment is shown in the app.`;
+    await safeSmsAndEmail(
       u.phoneNumber,
-      `Your Àjọ pool ${params.title} is ready! You collect on ${mine}. Contribute ${naira(params.amountPerMember * (hands[u.id] ?? 1), group.currency)} by ${fmtDate(firstDue)}. Your collector ${''}holds the money and every payment is shown in the app.`,
+      u.email,
+      `Your ÀJỌ pool "${params.title}" is ready`,
+      message,
     );
   }
   await prisma.groupMessage.create({
@@ -202,13 +205,13 @@ export async function recordPayment(actor: { id: string; role: string }, input: 
     const done = await settleContribution(contribution.id);
     if (autoVerify && !input.coverShortfall) {
       const message = `Your collector ${pool.group.admin.fullName} recorded ${naira(amount, pool.group.currency)} (${payment.method.toLowerCase()}) from you for ${pool.title}. Receipt code: ${payment.id.slice(-6).toUpperCase()}.`;
-      await safeSms(contribution.contributor.phoneNumber, message);
-      if (contribution.contributor.email) await sendEmail(contribution.contributor.email, 'ÀJỌ payment recorded', message);
+      await safeSmsAndEmail(contribution.contributor.phoneNumber, contribution.contributor.email, 'ÀJỌ payment recorded', message);
     }
     return { payment, contributionVerified: done.verified, readyForPayout: done.readyForPayout };
   }
   if (contribution.dueAt < new Date()) await prisma.ajoContribution.update({ where: { id: contribution.id }, data: { status: 'LATE' } });
-  await safeSms(pool.group.admin.phoneNumber, `${contribution.contributor.fullName} says they paid ${naira(amount, pool.group.currency)} for ${pool.title} cycle ${contribution.schedule.payoutOrder}. Confirm in ÀJỌ app once you receive it.`);
+  const message = `${contribution.contributor.fullName} says they paid ${naira(amount, pool.group.currency)} for ${pool.title} cycle ${contribution.schedule.payoutOrder}. Confirm in ÀJỌ app once you receive it.`;
+  await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'Payment needs verification', message);
   await safePush(pool.group.adminId, {
     title: 'Payment to verify',
     body: 'A member reported a contribution. Open ÀJỌ to verify it.',
@@ -239,7 +242,8 @@ async function markReadyIfComplete(scheduleId: string): Promise<boolean> {
   const claimed = await prisma.ajoRotationSchedule.updateMany({ where: { id: scheduleId, status: 'SCHEDULED' }, data: { status: 'READY' } });
   if (claimed.count === 0) return false;
   const s = await prisma.ajoRotationSchedule.findUniqueOrThrow({ where: { id: scheduleId }, include: { recipient: true, ajoPool: { include: { group: { include: { admin: true } } } } } });
-  await safeSms(s.ajoPool.group.admin.phoneNumber, `All payments for ${s.ajoPool.title} cycle ${s.payoutOrder} are confirmed. Pay ${s.recipient.fullName} and record the payout in ÀJỌ app.`);
+  const message = `All payments for ${s.ajoPool.title} cycle ${s.payoutOrder} are confirmed. Pay ${s.recipient.fullName} and record the payout in ÀJỌ app.`;
+  await safeSmsAndEmail(s.ajoPool.group.admin.phoneNumber, s.ajoPool.group.admin.email, 'Payout is ready', message);
   await safePush(s.ajoPool.group.adminId, {
     title: 'Payout ready',
     body: 'All contributions are confirmed. Open ÀJỌ to record the payout.',
@@ -264,8 +268,7 @@ export async function verifyContribution(verifier: { id: string; role: string },
   await audit(verifier.id, 'PAYMENTS_VERIFIED', 'AjoContribution', c.id, { count: pending.length });
   const done = await settleContribution(c.id);
   const message = `Your collector confirmed your Àjọ payment${done.verified ? '. You are fully paid for this cycle. Thank you!' : '. A balance is still due.'}`;
-  await safeSms(c.contributor.phoneNumber, message);
-  if (c.contributor.email) await sendEmail(c.contributor.email, 'ÀJỌ payment confirmed', message);
+  await safeSmsAndEmail(c.contributor.phoneNumber, c.contributor.email, 'ÀJỌ payment confirmed', message);
   const fresh = await prisma.ajoContribution.findUniqueOrThrow({ where: { id: c.id } });
   return { contribution: fresh, payoutReady: done.readyForPayout };
 }
@@ -278,7 +281,8 @@ export async function rejectPayment(verifier: { id: string; role: string }, paym
   if (p.status !== 'PENDING') throw new HttpError(409, 'Only pending payments can be rejected');
   const updated = await prisma.contributionPayment.update({ where: { id: p.id }, data: { status: 'REJECTED', rejectReason: reason, verifiedById: verifier.id, verifiedAt: new Date() } });
   await audit(verifier.id, 'PAYMENT_REJECTED', 'ContributionPayment', p.id, { reason });
-  await safeSms(c.contributor.phoneNumber, `Your collector could not confirm your ${naira(p.amount, c.ajoPool.group.currency)} payment: ${reason}. Please contact them.`);
+  const message = `Your collector could not confirm your ${naira(p.amount, c.ajoPool.group.currency)} payment: ${reason}. Please contact them.`;
+  await safeSmsAndEmail(c.contributor.phoneNumber, c.contributor.email, 'Payment was not confirmed', message);
   return updated;
 }
 
@@ -337,16 +341,18 @@ export async function recordPayout(collectorId: string, scheduleId: string, inpu
   if (!next) await earnCommission('AJO', pool.id, collectorId);
 
   const recipientMessage = `Your collector ${pool.group.admin.fullName} says they paid you ${naira(netPayout, cur)} for ${pool.title} (${input.method.toLowerCase()}). Reply CONFIRM if you received it, or NOTYET if not. You can also use the app.`;
-  await safeSms(s.recipient.phoneNumber, recipientMessage);
+  await safeSmsAndEmail(s.recipient.phoneNumber, s.recipient.email, 'ÀJỌ payout recorded', recipientMessage);
   await safePush(s.recipientId, {
     title: 'Confirm your payout',
     body: 'Your collector recorded a payout. Open ÀJỌ to confirm whether you received it.',
     data: { kind: 'CONFIRM_PAYOUT', poolId: pool.id },
   });
-  if (s.recipient.email) await sendEmail(s.recipient.email, 'ÀJỌ payout recorded', recipientMessage);
   const users = await prisma.user.findMany({ where: { id: { in: [...new Set(all.map((x) => x.recipientId))] } } });
   const tail = next ? `Next: ${next.recipient.fullName} on ${fmtDate(next.payoutDate)}.` : 'This pool is now complete.';
-  for (const u of users) if (u.id !== s.recipientId) await safeSms(u.phoneNumber, `${s.recipient.fullName} has been paid their Àjọ collection. ${tail}`);
+  for (const u of users) if (u.id !== s.recipientId) {
+    const message = `${s.recipient.fullName} has been paid their Àjọ collection. ${tail}`;
+    await safeSmsAndEmail(u.phoneNumber, u.email, 'ÀJỌ pool payout update', message);
+  }
   return { totalCollected, platformFee, collectorFee, netPayout, receiptUrl };
 }
 
@@ -368,7 +374,8 @@ export async function confirmReceipt(userId: string, scheduleId: string, receive
     data: { groupId: pool.groupId, ajoPoolId: pool.id, scheduleId: s.id, raisedById: userId, kind: 'PAYOUT_NOT_RECEIVED', description: note || `${s.recipient.fullName} says they have not received their payout.` },
   });
   await prisma.groupMessage.create({ data: { groupId: pool.groupId, messageType: 'SYSTEM', content: `⚠️ A recipient says they have not received a recorded payout (cycle ${s.payoutOrder}). The collector must resolve this.` } });
-  await safeSms(pool.group.admin.phoneNumber, `${s.recipient.fullName} says they have NOT received the ${pool.title} payout you recorded. Please resolve it in ÀJỌ app.`);
+  const message = `${s.recipient.fullName} says they have NOT received the ${pool.title} payout you recorded. Please resolve it in ÀJỌ app.`;
+  await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'ÀJỌ payout dispute', message);
   await audit(userId, 'PAYOUT_DISPUTED', 'AjoRotationSchedule', s.id);
   return { status: 'DISPUTED' as const };
 }
@@ -392,14 +399,16 @@ export async function flagDefaulter(scheduleId: string) {
     await prisma.user.update({ where: { id: c.contributorId }, data: { memberStatus: newStatus } });
     const cur = c.ajoPool.group.currency;
     const fine = c.ajoPool.lateFeeAmount > 0 ? ` A late fee of ${naira(c.ajoPool.lateFeeAmount, cur)} applies.` : '';
-    await safeSms(c.contributor.phoneNumber, `URGENT: You missed your Àjọ contribution of ${naira(c.amount, cur)} for ${c.schedule.recipient.fullName}'s cycle. Pay your collector now to avoid removal from future pools.${fine}`);
+    const memberMessage = `URGENT: You missed your Àjọ contribution of ${naira(c.amount, cur)} for ${c.schedule.recipient.fullName}'s cycle. Pay your collector now to avoid removal from future pools.${fine}`;
+    await safeSmsAndEmail(c.contributor.phoneNumber, c.contributor.email, 'Missed ÀJỌ contribution', memberMessage);
     await safePush(c.contributorId, {
       title: 'Missed contribution',
       body: 'A contribution is overdue. Open ÀJỌ to review it.',
       data: { kind: 'MISSED', poolId: c.ajoPoolId },
     });
     await prisma.groupMessage.create({ data: { groupId: c.ajoPool.groupId, messageType: 'SYSTEM', content: '⚠️ A member has missed their contribution for this cycle. The Collector has been notified.' } });
-    await safeSms(c.ajoPool.group.admin.phoneNumber, `${c.contributor.fullName} missed their Àjọ contribution of ${naira(c.amount, cur)} in "${c.ajoPool.title}" (${newStatus}).`);
+    const adminMessage = `${c.contributor.fullName} missed their Àjọ contribution of ${naira(c.amount, cur)} in "${c.ajoPool.title}" (${newStatus}).`;
+    await safeSmsAndEmail(c.ajoPool.group.admin.phoneNumber, c.ajoPool.group.admin.email, 'Member missed a contribution', adminMessage);
     await audit(null, 'CONTRIBUTION_MISSED', 'AjoContribution', c.id, { member: c.contributorId });
   }
   return overdue.length;
@@ -484,7 +493,8 @@ export async function requestSwap(userId: string, poolId: string, myScheduleId: 
   if (mine.recipientId !== userId) throw new HttpError(403, 'You can only swap your own turn');
   if (theirs.recipientId === userId) throw new HttpError(400, 'Pick another member\'s turn');
   const swap = await prisma.turnSwap.create({ data: { ajoPoolId: poolId, requesterId: userId, peerId: theirs.recipientId, scheduleAId: mine.id, scheduleBId: theirs.id, reason } });
-  await safeSms(theirs.recipient.phoneNumber, `${mine.recipient.fullName} asks to swap Àjọ turns with you (${fmtDate(mine.payoutDate)} ↔ ${fmtDate(theirs.payoutDate)}). Open the app to accept or decline.`);
+  const message = `${mine.recipient.fullName} asks to swap Àjọ turns with you (${fmtDate(mine.payoutDate)} ↔ ${fmtDate(theirs.payoutDate)}). Open the app to accept or decline.`;
+  await safeSmsAndEmail(theirs.recipient.phoneNumber, theirs.recipient.email, 'ÀJỌ turn swap request', message);
   return swap;
 }
 
@@ -496,7 +506,8 @@ export async function respondSwap(userId: string, swapId: string, accept: boolea
   const updated = await prisma.turnSwap.update({ where: { id: swapId }, data: { status: accept ? 'PENDING_COLLECTOR' : 'REJECTED' } });
   if (accept) {
     const pool = await prisma.ajoPool.findUniqueOrThrow({ where: { id: swap.ajoPoolId }, include: { group: { include: { admin: true } } } });
-    await safeSms(pool.group.admin.phoneNumber, `Two members of ${pool.title} agreed to swap Àjọ turns. Please approve or decline in ÀJỌ app.`);
+    const message = `Two members of ${pool.title} agreed to swap Àjọ turns. Please approve or decline in ÀJỌ app.`;
+    await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'ÀJỌ turn swap needs review', message);
   }
   return updated;
 }
@@ -525,7 +536,10 @@ export async function decideSwap(collectorId: string, swapId: string, approve: b
   await prisma.groupMessage.create({ data: { groupId: pool.groupId, messageType: 'SYSTEM', content: `🔁 Two members swapped Àjọ turns in "${pool.title}". The schedule has been updated.` } });
   await audit(collectorId, 'TURN_SWAP_APPROVED', 'TurnSwap', swapId);
   const [aa, bb] = await Promise.all([prisma.user.findUnique({ where: { id: a.recipientId } }), prisma.user.findUnique({ where: { id: b.recipientId } })]);
-  for (const u of [aa, bb]) await safeSms(u?.phoneNumber, `Your Àjọ turn swap in ${pool.title} was approved. Check your new collection date in the app.`);
+  for (const u of [aa, bb]) {
+    const message = `Your Àjọ turn swap in ${pool.title} was approved. Check your new collection date in the app.`;
+    await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ turn swap approved', message);
+  }
   return prisma.turnSwap.findUniqueOrThrow({ where: { id: swapId } });
 }
 

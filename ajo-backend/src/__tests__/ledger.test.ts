@@ -8,7 +8,7 @@ const mockPrisma = {
 };
 const sms = jest.fn();
 jest.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
-jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), safeSmsAndEmail: (...a: unknown[]) => a[0] && sms(a[0], a[3]), naira: (n: unknown) => `₦${n}` }));
 
 import { koboToNaira, nairaToKobo } from '../lib/kobo';
 import { CollectorCustodyProvider } from '../modules/payments/collector-custody.provider';

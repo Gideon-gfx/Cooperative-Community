@@ -9,7 +9,7 @@ const appealCreate = db.conductAppeal.create;
 db.conductAppeal.create = jest.fn(async (args: Row) => { if (db.conductAppeal.rows.some((a: Row) => a.conductLogId === args.data.conductLogId)) throw Object.assign(new Error('dup'), { code: 'P2002' }); return appealCreate(args); });
 const sms = jest.fn();
 jest.mock('../lib/prisma', () => ({ prisma: db }));
-jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), safeSmsAndEmail: (...a: unknown[]) => a[0] && sms(a[0], a[3]), naira: (n: unknown) => `₦${n}` }));
 
 import { boardIdOfGroup, boardMemberIdsFor, groupIdsOverseenBy, isBoardMemberFor } from '../modules/trust/board';
 import { emitContractChanged } from '../modules/apprenticeship/contract.events';

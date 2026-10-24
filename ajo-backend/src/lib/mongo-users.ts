@@ -6,6 +6,7 @@ type StoredUser = Partial<Omit<User, 'id' | 'fullName' | 'role' | 'referredById'
   Pick<User, 'fullName' | 'role'> & {
     referredById?: string | ObjectId | null;
     createdByAgentId?: string | ObjectId | null;
+    welcomeEmailSentAt?: Date;
   };
 type UserChanges = Partial<Omit<User, 'id' | 'createdAt' | 'updatedAt'>>;
 
@@ -173,4 +174,11 @@ export async function updateUserById(id: string, changes: UserChanges): Promise<
   await collection.updateOne({ _id }, { $set: changes });
   const document = await collection.findOne({ _id });
   return document ? asUser(document) : null;
+}
+
+export async function markWelcomeEmailSentNative(id: string): Promise<void> {
+  await (await users()).updateOne(
+    { _id: objectId(id) },
+    { $set: { welcomeEmailSentAt: new Date() } },
+  );
 }

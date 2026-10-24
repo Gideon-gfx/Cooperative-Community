@@ -13,7 +13,7 @@ const mockPrisma = {
 };
 
 jest.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
-jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), safeSmsAndEmail: jest.fn(), naira: (n: unknown) => `₦${n}` }));
 
 import { calculateTransportFee, haversineDistanceKm } from '../modules/ccgb/ccgb.logistics';
 import { dissolveFoodPool, lockAndProcessPool, pickWinner, sizeOrder, supplierPayable } from '../modules/ccgb/ccgb.service';

@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { HttpError } from '../../lib/errors';
 import { audit } from '../../lib/audit';
 import { koboToNaira, nairaToKobo } from '../../lib/kobo';
-import { safeSms } from '../../lib/notify';
+import { safeSmsAndEmail } from '../../lib/notify';
 import { toCsv } from '../../services/ledger.service';
 import * as monnify from '../../services/monnify.service';
 import { graduationEligible } from '../apprenticeship/contracts.logic';
@@ -108,7 +108,11 @@ export async function runSettlementReminders(now = new Date()) {
       const r = nextReminder(daysUntil(due.dueDate, now), due.remindersSent, decisions.settlement.reminderDays);
       if (r) {
         const claimed = await prisma.contributionDue.updateMany({ where: { id: due.id, remindersSent: { equals: due.remindersSent } }, data: { remindersSent: [...due.remindersSent, ...r.markSent.filter((d) => !due.remindersSent.includes(d))] } });
-        if (claimed.count > 0) { out.reminded++; await safeSms(master?.phoneNumber, REMINDER_TEXT(r.send, koboToNaira(s.remainingKobo))); }
+        if (claimed.count > 0) {
+          out.reminded++;
+          const message = REMINDER_TEXT(r.send, koboToNaira(s.remainingKobo));
+          await safeSmsAndEmail(master?.phoneNumber, master?.email, 'Settlement Fund contribution reminder', message);
+        }
       }
       if (isMissed(s, now) && !due.flaggedAt) {
         const claimed = await prisma.contributionDue.updateMany({ where: { id: due.id, flaggedAt: null }, data: { flaggedAt: now } });
@@ -140,7 +144,7 @@ export async function releasePreconditions(contractId: string) {
 /** The Trust Board of this fund's community (or the platform-wide board if its group has none). */
 async function notifyBoard(message: string, groupId?: string | null) {
   const board = await prisma.user.findMany({ where: { id: { in: await boardMemberIdsFor(groupId) } } });
-  for (const b of board) await safeSms(b.phoneNumber, message);
+  for (const b of board) await safeSmsAndEmail(b.phoneNumber, b.email, 'Settlement Fund update', message);
 }
 
 /** Starts the release: the fund becomes READY_FOR_RELEASE and the Trust Board is told. */
@@ -157,7 +161,8 @@ export async function openRelease(user: Actor, contractId: string) {
   const r = await prisma.settlementRelease.create({ data: { fundId: p.fund.id, contractId, status: 'AWAITING_DESTINATION', openedById: user.id, approvalsRequired: decisions.settlement.approvalsRequired, fundsEntryId: null } });
   await audit(user.id, 'RELEASE_OPENED', 'SettlementRelease', r.id, { from: 'ACCUMULATING', to: 'READY_FOR_RELEASE', balanceKobo: p.balanceKobo.toString() });
   const apprentice = await prisma.user.findUnique({ where: { id: c.apprenticeId } });
-  await safeSms(apprentice?.phoneNumber, 'ÀJỌ: your Settlement Fund is ready to be released. Open the app and say where it should go.');
+  const message = 'ÀJỌ: your Settlement Fund is ready to be released. Open the app and say where it should go.';
+  await safeSmsAndEmail(apprentice?.phoneNumber, apprentice?.email, 'Settlement Fund ready for release', message);
   await notifyBoard('ÀJỌ: a Settlement Fund is ready for release. It will need your approval once the graduate has confirmed where the money goes.', c.communityGroupId);
   return r;
 }
@@ -238,7 +243,8 @@ export async function approveRelease(user: Actor, releaseId: string, input: { ap
     if (done.count > 0) {
       await audit(null, 'RELEASE_REJECTED', 'SettlementRelease', r.id, { from: 'AWAITING_APPROVALS', to: 'REJECTED' });
       const apprentice = await prisma.user.findUnique({ where: { id: c.apprenticeId } });
-      await safeSms(apprentice?.phoneNumber, 'ÀJỌ: the Trust Board did not approve this release. Open the app to see why and to start again.');
+      const message = 'ÀJỌ: the Trust Board did not approve this release. Open the app to see why and to start again.';
+      await safeSmsAndEmail(apprentice?.phoneNumber, apprentice?.email, 'Settlement Fund release was not approved', message);
     }
     return { status: 'REJECTED' as const };
   }
@@ -305,7 +311,8 @@ export async function onDisbursementSettled(entry: Pick<FundsEntry, 'id' | 'purp
     await prisma.settlementFund.updateMany({ where: { id: r.fundId, status: 'READY_FOR_RELEASE' }, data: { status: 'RELEASED', releasedAt: new Date() } });
     await prisma.apprenticeshipContract.updateMany({ where: { id: c.id, status: 'COMPLETED_PENDING_SETTLEMENT' }, data: { status: 'GRADUATED' } });
     await audit(null, 'RELEASE_COMPLETED', 'SettlementRelease', r.id, { from: 'DISBURSING', to: 'RELEASED', amountKobo: entry.amountKobo.toString(), contract: 'GRADUATED' });
-    for (const p of parties) await safeSms(p.phoneNumber, `ÀJỌ: ₦${koboToNaira(entry.amountKobo)} from the Settlement Fund has been sent. Congratulations to the graduate!`);
+    const message = `ÀJỌ: ₦${koboToNaira(entry.amountKobo)} from the Settlement Fund has been sent. Congratulations to the graduate!`;
+    for (const p of parties) await safeSmsAndEmail(p.phoneNumber, p.email, 'Settlement Fund released', message);
   } else {
     await audit(null, 'RELEASE_FAILED', 'SettlementRelease', r.id, { reason: reason ?? null });
     await notifyBoard(`ÀJỌ: a Settlement Fund release FAILED: ${(reason ?? 'unknown reason').slice(0, 100)}. The money is still in the fund. A new release can be started.`, c.communityGroupId);

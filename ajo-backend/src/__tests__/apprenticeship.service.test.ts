@@ -18,7 +18,7 @@ db.$transaction = (fn: (d: unknown) => unknown) => fn(db);
 
 const sms = jest.fn();
 jest.mock('../lib/prisma', () => ({ prisma: db }));
-jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: (...a: unknown[]) => sms(...a), safeSmsAndEmail: (...a: unknown[]) => a[0] && sms(a[0], a[3]), naira: (n: unknown) => `₦${n}` }));
 
 import {
   applyAsMaster, conductFor, createContract, decideMaster, editDraft, getContract, logConduct, myContracts, pauseContract, presentContract, refreshCompletion, resumeContract, reviewMilestone, setMyDateOfBirth,

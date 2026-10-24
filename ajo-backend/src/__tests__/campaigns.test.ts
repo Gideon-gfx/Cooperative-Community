@@ -9,7 +9,7 @@ const mockPrisma = {
   auditLog: { create: jest.fn() },
 };
 jest.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
-jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), safeSmsAndEmail: jest.fn(), naira: (n: unknown) => `₦${n}` }));
 
 import { createCampaign, giveGift, recordDelivery, verifyGift } from '../modules/campaigns/campaigns.service';
 

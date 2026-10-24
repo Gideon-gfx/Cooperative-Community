@@ -2,7 +2,7 @@ import { FoodPaymentKind } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { HttpError } from '../../lib/errors';
 import { config } from '../../lib/config';
-import { naira, safeSms } from '../../lib/notify';
+import { naira, safeSmsAndEmail } from '../../lib/notify';
 import { round2 } from '../../lib/money';
 import { audit } from '../../lib/audit';
 import { addEntry } from '../../services/ledger.service';
@@ -80,8 +80,10 @@ export async function joinFoodPool(userId: string, poolId: string, proofUrl: str
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const cur = pool.group.currency;
-  await safeSms(user.phoneNumber, `You joined the food pool in ${pool.group.name} (${shares} share${shares > 1 ? 's' : ''}, ${naira(pool.contributionAmt * shares, cur)}). Your collector holds the money and will confirm it. Voting opens once confirmed.`);
-  await safeSms(pool.group.admin.phoneNumber, `${user.fullName} joined your food pool and says they paid. Please confirm in ÀJỌ app once you receive it.`);
+  const memberMessage = `You joined the food pool in ${pool.group.name} (${shares} share${shares > 1 ? 's' : ''}, ${naira(pool.contributionAmt * shares, cur)}). Your collector holds the money and will confirm it. Voting opens once confirmed.`;
+  await safeSmsAndEmail(user.phoneNumber, user.email, 'Food pool payment recorded', memberMessage);
+  const adminMessage = `${user.fullName} joined your food pool and says they paid. Please confirm in ÀJỌ app once you receive it.`;
+  await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'Food pool payment needs verification', adminMessage);
   return member;
 }
 
@@ -98,7 +100,7 @@ export async function verifyFoodPayment(actor: { id: string; role: string }, mem
   await prisma.foodPool.update({ where: { id: member.poolId }, data: { totalFund: { increment: amount } } });
   await addEntry({ foodPoolId: member.poolId }, 'IN', 'FOOD_PAYMENT', amount, actor.id, `${member.user.fullName} · ${member.shares} share${member.shares > 1 ? 's' : ''}`, member.id);
   await audit(actor.id, 'FOOD_PAYMENT_VERIFIED', 'FoodPoolMember', memberId, { amount });
-  await safeSms(member.user.phoneNumber, 'Payment confirmed by your collector! You can now vote for food items in your pool.');
+  await safeSmsAndEmail(member.user.phoneNumber, member.user.email, 'Food pool payment confirmed', 'Payment confirmed by your collector! You can now vote for food items in your pool.');
   return prisma.foodPoolMember.findUniqueOrThrow({ where: { id: memberId } });
 }
 
@@ -167,12 +169,15 @@ export async function lockAndProcessPool(poolId: string) {
 
   const cur = pool.group.currency;
   const deposit = round2(order.orderAmount * (pool.supplierDepositPct / 100));
-  await safeSms(product.supplier.user.phoneNumber, `New bulk order: ${order.units} × ${product.name} at ${naira(product.unitPrice, cur)} (locked price), total ${naira(order.orderAmount, cur)}. Collector ${pool.group.admin.fullName} will pay a deposit of ${naira(deposit, cur)}, the rest after delivery is checked.`);
+  const supplierMessage = `New bulk order: ${order.units} × ${product.name} at ${naira(product.unitPrice, cur)} (locked price), total ${naira(order.orderAmount, cur)}. Collector ${pool.group.admin.fullName} will pay a deposit of ${naira(deposit, cur)}, the rest after delivery is checked.`;
+  await safeSmsAndEmail(product.supplier.user.phoneNumber, product.supplier.user.email, 'ÀJỌ bulk food order', supplierMessage);
   if (driver) {
-    await safeSms(driver.phoneNumber, `New ÀJỌ delivery job. Pickup from ${product.supplier.businessName}. Deliver to ${pool.communityHubAddr ?? 'the community hub'}. Fee: ${naira(transportFee, cur)}, paid by the collector after delivery. Take a photo as proof.`);
+    const message = `New ÀJỌ delivery job. Pickup from ${product.supplier.businessName}. Deliver to ${pool.communityHubAddr ?? 'the community hub'}. Fee: ${naira(transportFee, cur)}, paid by the collector after delivery. Take a photo as proof.`;
+    await safeSmsAndEmail(driver.phoneNumber, driver.email, 'ÀJỌ delivery job assigned', message);
   }
   for (const m of pool.members) {
-    await safeSms(m.user.phoneNumber, `Your food pool is locked! ${product.name} won the vote. Collection point: ${pool.communityHubAddr ?? 'to be announced'}. Pick a collection time in the app.`);
+    const message = `Your food pool is locked! ${product.name} won the vote. Collection point: ${pool.communityHubAddr ?? 'to be announced'}. Pick a collection time in the app.`;
+    await safeSmsAndEmail(m.user.phoneNumber, m.user.email, 'ÀJỌ food pool order locked', message);
   }
   await prisma.groupMessage.create({
     data: {
@@ -222,7 +227,10 @@ export async function confirmDelivery(driverId: string, poolId: string, input: {
   await prisma.groupMessage.create({
     data: { groupId: pool.groupId, messageType: 'SYSTEM', content: short ? `📦 Delivered, but short: ${input.receivedKg} kg of ${pool.orderKg} kg ordered. The supplier will only be paid for what arrived.` : `📦 Food delivered to ${pool.communityHubAddr ?? 'the hub'}. Pick your collection time and collect your share.` },
   });
-  for (const m of pool.members) await safeSms(m.user.phoneNumber, `Your food order has been delivered to ${pool.communityHubAddr ?? 'the hub'}. Come collect your share!`);
+  for (const m of pool.members) {
+    const message = `Your food order has been delivered to ${pool.communityHubAddr ?? 'the hub'}. Come collect your share!`;
+    await safeSmsAndEmail(m.user.phoneNumber, m.user.email, 'ÀJỌ food order delivered', message);
+  }
   await audit(driverId, 'FOOD_DELIVERED', 'FoodPool', poolId, { receivedKg: input.receivedKg ?? null, short });
   return { status: 'DELIVERED' as const, short, supplierPayable: supplierPayable(pool.netFoodBudget, pool.orderKg ?? 0, input.receivedKg ?? null), cur };
 }
@@ -256,7 +264,8 @@ export async function recordFoodPayment(collectorId: string, poolId: string, inp
   const payment = await prisma.foodPayment.create({ data: { poolId, kind: input.kind, amount: input.amount, toUserId, reference: input.reference, proofUrl: input.proofUrl, recordedById: collectorId } });
   await addEntry({ foodPoolId: poolId }, 'OUT', input.kind === 'DRIVER_FEE' ? 'DRIVER_PAYMENT' : 'SUPPLIER_PAYMENT', input.amount, collectorId, `${input.kind.replace(/_/g, ' ').toLowerCase()}${input.reference ? ' · ' + input.reference : ''}`, payment.id);
   const to = toUserId ? await prisma.user.findUnique({ where: { id: toUserId } }) : null;
-  await safeSms(to?.phoneNumber, `Your collector recorded a payment of ${naira(input.amount, cur)} to you for the ÀJỌ food order (${input.kind.replace(/_/g, ' ').toLowerCase()}). If you did not receive it, tell the collector.`);
+  const message = `Your collector recorded a payment of ${naira(input.amount, cur)} to you for the ÀJỌ food order (${input.kind.replace(/_/g, ' ').toLowerCase()}). If you did not receive it, tell the collector.`;
+  await safeSmsAndEmail(to?.phoneNumber, to?.email, 'ÀJỌ food payment recorded', message);
   await prisma.groupMessage.create({ data: { groupId: pool.groupId, senderId: collectorId, messageType: 'SYSTEM', content: `💸 Collector recorded ${input.kind.replace(/_/g, ' ').toLowerCase()}: ${naira(input.amount, cur)}.` } });
   await audit(collectorId, 'FOOD_PAYMENT_RECORDED', 'FoodPool', poolId, { kind: input.kind, amount: input.amount });
   return payment;
@@ -273,7 +282,8 @@ export async function recordRefund(collectorId: string, poolId: string, memberId
   if (claimed.count === 0) throw new HttpError(409, 'Already refunded');
   await prisma.foodPayment.create({ data: { poolId, kind: 'REFUND', amount: member.refundDue, toUserId: member.userId, reference: input.reference, proofUrl: input.proofUrl, recordedById: collectorId } });
   await addEntry({ foodPoolId: poolId }, 'OUT', 'REFUND', member.refundDue, collectorId, `Refund to ${member.user.fullName}`, memberId);
-  await safeSms(member.user.phoneNumber, `Your collector recorded a refund of ${naira(member.refundDue, pool.group.currency)} to you. If you did not receive it, tell them or raise a dispute in ÀJỌ app.`);
+  const message = `Your collector recorded a refund of ${naira(member.refundDue, pool.group.currency)} to you. If you did not receive it, tell them or raise a dispute in ÀJỌ app.`;
+  await safeSmsAndEmail(member.user.phoneNumber, member.user.email, 'ÀJỌ food pool refund recorded', message);
   await audit(collectorId, 'FOOD_REFUND_RECORDED', 'FoodPoolMember', memberId, { amount: member.refundDue });
   return { refunded: member.refundDue };
 }
@@ -291,9 +301,13 @@ export async function dissolveFoodPool(poolId: string) {
   for (const m of refundable) {
     const amount = pool.contributionAmt * m.shares;
     await prisma.foodPoolMember.update({ where: { id: m.id }, data: { refundDue: amount } });
-    await safeSms(m.user.phoneNumber, `Your food pool was dissolved (not enough members). Your collector ${pool.group.admin.fullName} will refund ${naira(amount, cur)}. You will get an SMS when they record it.`);
+    const message = `Your food pool was dissolved (not enough members). Your collector ${pool.group.admin.fullName} will refund ${naira(amount, cur)}. You will get a notification when they record it.`;
+    await safeSmsAndEmail(m.user.phoneNumber, m.user.email, 'ÀJỌ food pool dissolved', message);
   }
-  if (refundable.length) await safeSms(pool.group.admin.phoneNumber, `Your food pool was dissolved. You owe ${refundable.length} member refund(s). Pay them and record each one in ÀJỌ app.`);
+  if (refundable.length) {
+    const message = `Your food pool was dissolved. You owe ${refundable.length} member refund(s). Pay them and record each one in ÀJỌ app.`;
+    await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'ÀJỌ food pool refunds due', message);
+  }
   await prisma.groupMessage.create({ data: { groupId: pool.groupId, messageType: 'SYSTEM', content: '❌ This food pool did not reach its target and was dissolved. The collector will refund everyone who paid.' } });
   return { refunded: refundable.length, owed: refundable.length };
 }
@@ -347,7 +361,7 @@ export async function ratePool(userId: string, poolId: string, input: { stars: n
   await prisma.ccgbSupplier.update({ where: { id: order.supplierId }, data: { ratingAvg: round2(agg._avg.stars ?? 0), ratingCount: agg._count._all } });
   if (!input.qualityOk) {
     await prisma.dispute.create({ data: { groupId: pool.groupId, foodPoolId: poolId, raisedById: userId, kind: 'FOOD_QUALITY', description: input.comment || 'Member reported a quality problem with the delivery.' } });
-    await safeSms(pool.group.admin.phoneNumber, 'A member reported a food quality problem. Please review it in ÀJỌ app.');
+    await safeSmsAndEmail(pool.group.admin.phoneNumber, pool.group.admin.email, 'ÀJỌ food quality issue', 'A member reported a food quality problem. Please review it in ÀJỌ app.');
   }
   return { rated: true };
 }

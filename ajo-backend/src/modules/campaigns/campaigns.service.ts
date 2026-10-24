@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { HttpError } from '../../lib/errors';
 import { assertGroupMember } from '../../lib/access';
 import { audit } from '../../lib/audit';
-import { naira, safeSms } from '../../lib/notify';
+import { naira, safeSmsAndEmail } from '../../lib/notify';
 import { round2 } from '../../lib/money';
 import { addEntry } from '../../services/ledger.service';
 
@@ -16,7 +16,7 @@ export async function loadCampaign(id: string) {
   const c = await prisma.campaign.findUnique({ where: { id }, include: { options: true } });
   if (!c) throw new HttpError(404, 'Contribution not found');
   const group = await prisma.communityGroup.findUniqueOrThrow({ where: { id: c.groupId }, select: { id: true, name: true, currency: true, adminId: true, fundsMode: true } });
-  const host = await prisma.user.findUniqueOrThrow({ where: { id: c.hostId }, select: { id: true, fullName: true, phoneNumber: true } });
+  const host = await prisma.user.findUniqueOrThrow({ where: { id: c.hostId }, select: { id: true, fullName: true, phoneNumber: true, email: true } });
   return { ...c, group, host };
 }
 export type LoadedCampaign = Awaited<ReturnType<typeof loadCampaign>>;
@@ -143,7 +143,8 @@ export async function giveGift(actorId: string, campaignId: string, b: GiftInput
   });
   await audit(actorId, 'GIFT_RECORDED', 'CampaignGift', gift.id, { campaignId, kind: b.kind, amount });
   if (hostRecords) return { gift: await verifyGift(actorId, gift.id) };
-  await safeSms(c.host.phoneNumber, `A member gave ${b.kind === 'MONEY' ? naira(amount, c.group.currency) : b.foodNote} to "${c.title}". Please confirm it in ÀJỌ app.`);
+  const message = `A member gave ${b.kind === 'MONEY' ? naira(amount, c.group.currency) : b.foodNote} to "${c.title}". Please confirm it in ÀJỌ app.`;
+  await safeSmsAndEmail(c.host.phoneNumber, c.host.email, `Gift recorded for "${c.title}"`, message);
   return { gift };
 }
 
@@ -151,7 +152,7 @@ async function loadGift(id: string) {
   const g = await prisma.campaignGift.findUnique({ where: { id } });
   if (!g) throw new HttpError(404, 'Gift not found');
   const c = await loadCampaign(g.campaignId);
-  const giver = await prisma.user.findUniqueOrThrow({ where: { id: g.userId }, select: { fullName: true, phoneNumber: true } });
+  const giver = await prisma.user.findUniqueOrThrow({ where: { id: g.userId }, select: { fullName: true, phoneNumber: true, email: true } });
   return { g, c, giver };
 }
 
@@ -165,7 +166,8 @@ export async function verifyGift(hostId: string, giftId: string) {
     await addEntry({ campaignId: c.id }, 'IN', 'CONTRIBUTION', g.amount, hostId, `${giver.fullName} · ${(g.method ?? 'TRANSFER').toLowerCase()}`, g.id);
   }
   await audit(hostId, 'GIFT_VERIFIED', 'CampaignGift', g.id, { amount: g.amount });
-  await safeSms(giver.phoneNumber, `${c.host.fullName} confirmed your ${g.kind === 'MONEY' ? naira(g.amount, c.group.currency) : g.foodNote} for "${c.title}". Receipt ${done.receiptNo}. Thank you!`);
+  const message = `${c.host.fullName} confirmed your ${g.kind === 'MONEY' ? naira(g.amount, c.group.currency) : g.foodNote} for "${c.title}". Receipt ${done.receiptNo}. Thank you!`;
+  await safeSmsAndEmail(giver.phoneNumber, giver.email, `Gift confirmed for "${c.title}"`, message);
   return done;
 }
 
@@ -175,7 +177,8 @@ export async function rejectGift(hostId: string, giftId: string, reason: string)
   if (g.status !== 'PENDING') throw new HttpError(409, 'Only waiting gifts can be rejected');
   const done = await prisma.campaignGift.update({ where: { id: g.id }, data: { status: 'REJECTED', rejectReason: reason, verifiedById: hostId, verifiedAt: new Date() } });
   await audit(hostId, 'GIFT_REJECTED', 'CampaignGift', g.id, { reason });
-  await safeSms(giver.phoneNumber, `${c.host.fullName} could not confirm your gift to "${c.title}": ${reason}. Please contact them.`);
+  const message = `${c.host.fullName} could not confirm your gift to "${c.title}": ${reason}. Please contact them.`;
+  await safeSmsAndEmail(giver.phoneNumber, giver.email, `Gift not confirmed for "${c.title}"`, message);
   return done;
 }
 
@@ -204,7 +207,8 @@ export async function recordDelivery(hostId: string, campaignId: string, b: { am
   });
   if (c.recipientUserId) {
     const r = await prisma.user.findUnique({ where: { id: c.recipientUserId } });
-    await safeSms(r?.phoneNumber, `${c.host.fullName} says help from "${c.title}" has reached you. Please confirm in ÀJỌ app.`);
+    const message = `${c.host.fullName} says help from "${c.title}" has reached you. Please confirm in ÀJỌ app.`;
+    await safeSmsAndEmail(r?.phoneNumber, r?.email, `Help delivery from "${c.title}"`, message);
   }
   await audit(hostId, 'CAMPAIGN_DELIVERED', 'Campaign', c.id, { amount: b.amount });
   return done;
@@ -224,7 +228,8 @@ export async function confirmDelivery(userId: string, campaignId: string, receiv
     data: { groupId: c.groupId, campaignId: c.id, raisedById: userId, kind: 'PAYOUT_NOT_RECEIVED', description: note || `${c.recipientName} says the help from "${c.title}" has not arrived.` },
   });
   await prisma.groupMessage.create({ data: { groupId: c.groupId, messageType: 'SYSTEM', content: `⚠️ ${c.recipientName} says help from "${c.title}" has NOT arrived. The host must resolve this.` } });
-  await safeSms(c.host.phoneNumber, `${c.recipientName} says help from "${c.title}" has NOT arrived. Please resolve it in ÀJỌ app.`);
+  const message = `${c.recipientName} says help from "${c.title}" has NOT arrived. Please resolve it in ÀJỌ app.`;
+  await safeSmsAndEmail(c.host.phoneNumber, c.host.email, `Delivery dispute for "${c.title}"`, message);
   await audit(userId, 'CAMPAIGN_DISPUTED', 'Campaign', c.id);
   return { status: 'DISPUTED' as const };
 }

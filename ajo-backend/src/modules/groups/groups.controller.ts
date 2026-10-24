@@ -6,7 +6,7 @@ import { objectId } from '../../lib/validators';
 import { HttpError } from '../../lib/errors';
 import { COUNTRIES, normalizePhone } from '../../lib/phone';
 import { getCollectorStats, getTrust } from '../../services/trust.service';
-import { safeSms } from '../../lib/notify';
+import { safeSmsAndEmail } from '../../lib/notify';
 import { assertGroupAdmin, assertGroupMember } from '../../lib/access';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 
@@ -180,10 +180,15 @@ groupsRouter.post('/:id/invite', async (req, res) => {
         create: { groupId, userId: user.id },
         update: {},
       });
-      await safeSms(phone, `You've been added to "${group.name}" on ÀJỌ. Open the app to see the group.`);
+      await safeSmsAndEmail(
+        phone,
+        user.email,
+        `Added to ${group.name} on ÀJỌ`,
+        `You've been added to "${group.name}" on ÀJỌ. Open the app to see the group.`,
+      );
       result.added++;
     } else {
-      await safeSms(phone, `You've been invited to join "${group.name}" on ÀJỌ. Download the app: ${APP_LINK}`);
+      await safeSmsAndEmail(phone, null, `Invitation to ${group.name} on ÀJỌ`, `You've been invited to join "${group.name}" on ÀJỌ. Download the app: ${APP_LINK}`);
       result.invited++;
     }
   }

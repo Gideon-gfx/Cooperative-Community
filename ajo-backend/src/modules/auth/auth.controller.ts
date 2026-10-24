@@ -10,9 +10,10 @@ import { COUNTRIES, normalizePhone } from '../../lib/phone';
 import { safeSms } from '../../lib/notify';
 import { sendSms } from '../../services/termii.service';
 import { sendEmail } from '../../lib/mailer';
+import { passwordResetEmail, welcomeEmail } from '../../lib/email-template';
 import { audit, auditNative } from '../../lib/audit';
 import { hashPassword, hashPin, isValidPin, verifyPassword, verifyPin } from '../../lib/security';
-import { createEmailUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, getReferralSummaryNative, setReferralCodeIfMissingNative, updateUserById } from '../../lib/mongo-users';
+import { createEmailUser, findUserByEmail, findUserById, findUserByPhone, findUserIdByReferralCode, getReferralSummaryNative, markWelcomeEmailSentNative, setReferralCodeIfMissingNative, updateUserById } from '../../lib/mongo-users';
 import { consumePasswordResetCode, deletePasswordResetCode, findPasswordResetCode, incrementPasswordResetAttempts, upsertPasswordResetCode } from '../../lib/mongo-password-reset';
 import { authenticate, roleGuard } from '../../middleware/auth.middleware';
 import { getCollectorStatsNative, getTrustNative } from '../../services/native-auth-profile.service';
@@ -124,7 +125,16 @@ authRouter.post('/register', async (req, res) => {
     throw error;
   }
   await auditNative(user.id, 'REGISTER_EMAIL', 'User', user.id);
-  if (user.email) await sendEmail(user.email, 'Welcome to ÀJỌ', `Hi ${user.fullName},\n\nYour ÀJỌ account is ready. You can now sign in and join your community.\n\nIf you did not create this account, please contact support.`);
+  if (user.email) {
+    const welcome = welcomeEmail(user.fullName);
+    if (await sendEmail(user.email, welcome.subject, welcome.text, welcome.html)) {
+      try {
+        await markWelcomeEmailSentNative(user.id);
+      } catch (error) {
+        console.error('[mail] welcome delivery marker failed', error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
   res.status(201).json({ token: signToken(user), user: publicUser(user) });
 });
 
@@ -159,7 +169,8 @@ authRouter.post('/forgot-password', async (req, res) => {
       const data = { codeHash: resetHash(user.id, code), expiresAt: new Date(Date.now() + OTP_TTL_MS), attempts: 0, createdAt: new Date() };
       await upsertPasswordResetCode({ userId: user.id, ...data });
       try {
-        const sent = await sendEmail(body.email, 'Your ÀJỌ password reset code', `Your ÀJỌ password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email. Never share this code.`);
+        const resetEmail = passwordResetEmail(code);
+        const sent = await sendEmail(body.email, resetEmail.subject, resetEmail.text, resetEmail.html);
         if (!sent) throw new HttpError(503, 'We could not send the email right now. Please try again later.');
       } catch (error) {
         await deletePasswordResetCode(user.id, data.codeHash);

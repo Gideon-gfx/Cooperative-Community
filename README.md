@@ -19,6 +19,13 @@ npm run dev            # API on :4000
 cd ajo-mobile && npx expo start --port 8082   # scan with Expo Go (same Wi‑Fi)
 ```
 SMS delivery for notifications and account recovery requires `TERMII_API_KEY`. Account creation does not send a phone verification code.
+Email delivery uses configured SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`) or Resend (`RESEND_API_KEY`, `MAIL_FROM`). Welcome, password-reset, and transactional emails use the ÀJỌ branded template.
+
+To send the welcome email to existing accounts that have an email address, first run a dry run from `ajo-backend`:
+```
+npx ts-node --transpile-only scripts/backfill-welcome-emails.ts
+```
+Add `--send` to deliver. Successful deliveries are marked so future runs skip them. Accounts whose welcome emails were sent before delivery tracking was introduced are not distinguishable and will receive the backfill email again.
 
 ## iOS push notifications
 The iOS app uses bundle ID `com.cooperativecommunity.ajo`. Push notifications are opt-in from **Settings** and cover

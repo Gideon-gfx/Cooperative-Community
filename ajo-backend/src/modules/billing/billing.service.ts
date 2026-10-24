@@ -7,7 +7,7 @@ import { getMongoDb } from '../../lib/mongodb';
 import { HttpError } from '../../lib/errors';
 import { audit } from '../../lib/audit';
 import { koboToNaira } from '../../lib/kobo';
-import { safeSms } from '../../lib/notify';
+import { safeSmsAndEmail } from '../../lib/notify';
 import * as monnify from '../../services/monnify.service';
 import { computeWaterfall } from '../payments/fee-engine';
 import { commissionBpFor } from '../payments/platform-config';
@@ -160,7 +160,8 @@ export async function recordBillingPayment(paymentReference: string, transaction
   if (String(live.paymentStatus).toUpperCase() !== 'PAID') return 'NOT_PAID';
   if (BigInt(Math.round(Number(live.amountPaid) * 100)) < inv.amountKobo) {
     const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
-    for (const a of admins) await safeSms(a.phoneNumber, `ÀJỌ alert: invoice payment ${paymentReference} was less than the amount due. Please review.`);
+    const message = `ÀJỌ alert: invoice payment ${paymentReference} was less than the amount due. Please review.`;
+    for (const a of admins) await safeSmsAndEmail(a.phoneNumber, a.email, 'Billing payment needs review', message);
     return 'AMOUNT_MISMATCH';
   }
   if (sInv) {
@@ -168,14 +169,16 @@ export async function recordBillingPayment(paymentReference: string, transaction
     if (!sub) return 'DUPLICATE';
     await audit(sInv.userId, 'SUBSCRIPTION_PAID', 'SubscriptionInvoice', sInv.id, { amountKobo: sInv.amountKobo.toString() });
     const u = await prisma.user.findUnique({ where: { id: sInv.userId } });
-    await safeSms(u?.phoneNumber, `ÀJỌ: thank you. Your ${sInv.plan === 'ORGANIZER' ? 'organizer' : 'Member Plus'} plan is paid until ${sub.currentPeriodEnd?.toISOString().slice(0, 10)}.`);
+    const message = `ÀJỌ: thank you. Your ${sInv.plan === 'ORGANIZER' ? 'organizer' : 'Member Plus'} plan is paid until ${sub.currentPeriodEnd?.toISOString().slice(0, 10)}.`;
+    await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ subscription payment received', message);
     return 'RECORDED';
   }
   const claimed = await prisma.commissionInvoice.updateMany({ where: { id: cInv!.id, status: 'PENDING' }, data: { status: 'PAID', paidAt: new Date(), transactionReference } });
   if (claimed.count === 0) return 'DUPLICATE';
   await audit(cInv!.collectorUserId, 'COMMISSION_INVOICE_PAID', 'CommissionInvoice', cInv!.id, { amountKobo: cInv!.amountKobo.toString() });
   const c = await prisma.user.findUnique({ where: { id: cInv!.collectorUserId } });
-  await safeSms(c?.phoneNumber, `ÀJỌ: thank you. Your commission invoice of ₦${koboToNaira(cInv!.amountKobo)} is paid.`);
+  const message = `ÀJỌ: thank you. Your commission invoice of ₦${koboToNaira(cInv!.amountKobo)} is paid.`;
+  await safeSmsAndEmail(c?.phoneNumber, c?.email, 'ÀJỌ commission payment received', message);
   return 'RECORDED';
 }
 
@@ -224,7 +227,8 @@ export async function runSubscriptionCycle(now = new Date()) {
         const claimed = await prisma.subscription.updateMany({ where: { id: sub.id, remindersSent: { equals: sub.remindersSent } }, data: { remindersSent: [...sub.remindersSent, ...r.markSent.filter((d) => !sub.remindersSent.includes(d))] } });
         if (claimed.count > 0) {
           out.reminded++;
-          await safeSms(user?.phoneNumber, r.send === 0 ? `ÀJỌ: your ${label} renews today. Please pay in the app to keep creating new cycles.` : `ÀJỌ: your ${label} ends in ${r.send} days. Please pay in the app to renew.`);
+          const message = r.send === 0 ? `ÀJỌ: your ${label} renews today. Please pay in the app to keep creating new cycles.` : `ÀJỌ: your ${label} ends in ${r.send} days. Please pay in the app to renew.`;
+          await safeSmsAndEmail(user?.phoneNumber, user?.email, `${label} renewal reminder`, message);
         }
       }
     }
@@ -236,13 +240,15 @@ export async function runSubscriptionCycle(now = new Date()) {
       } else {
         const graceEndsAt = new Date(end.getTime() + decisions.billing.graceDays * DAY_MS);
         await prisma.subscription.update({ where: { id: sub.id }, data: { status: 'GRACE', graceEndsAt } });
-        await safeSms(user?.phoneNumber, `ÀJỌ: your ${label} has ended. You have ${decisions.billing.graceDays} days to renew. Your groups and members are not affected.`);
+        const message = `ÀJỌ: your ${label} has ended. You have ${decisions.billing.graceDays} days to renew. Your groups and members are not affected.`;
+        await safeSmsAndEmail(user?.phoneNumber, user?.email, `${label} ended`, message);
         out.graced++;
       }
     } else if (sub.status === 'GRACE' && sub.graceEndsAt && now >= sub.graceEndsAt) {
       await prisma.subscription.update({ where: { id: sub.id }, data: { status: 'LAPSED' } });
       await prisma.subscriptionInvoice.updateMany({ where: { subscriptionId: sub.id, status: 'PENDING', periodStart: { lt: now } }, data: { status: 'VOID' } });
-      await safeSms(user?.phoneNumber, `ÀJỌ: your ${label} has lapsed. Existing cycles continue to the end and members can still pay, confirm and be paid, but you cannot start new cycles until you renew.`);
+      const message = `ÀJỌ: your ${label} has lapsed. Existing cycles continue to the end and members can still pay, confirm and be paid, but you cannot start new cycles until you renew.`;
+      await safeSmsAndEmail(user?.phoneNumber, user?.email, `${label} lapsed`, message);
       out.lapsed++;
     }
   }
@@ -342,7 +348,8 @@ export async function generateCommissionInvoices(now = new Date()) {
       await prisma.commissionAccrual.updateMany({ where: { id: { in: rows.map((r) => r.id) }, invoiceId: null }, data: { invoiceId: invoice.id } });
       created.push(invoice);
       const u = await prisma.user.findUnique({ where: { id: collectorUserId } });
-      await safeSms(u?.phoneNumber, `ÀJỌ: your commission invoice for ${start.toISOString().slice(0, 7)} is ₦${koboToNaira(amountKobo)}, due in ${decisions.billing.commissionInvoice.dueDays} days. Pay it in the app.`);
+      const message = `ÀJỌ: your commission invoice for ${start.toISOString().slice(0, 7)} is ₦${koboToNaira(amountKobo)}, due in ${decisions.billing.commissionInvoice.dueDays} days. Pay it in the app.`;
+      await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ commission invoice', message);
       if (d.flagged) await audit(null, 'COMMISSION_DIVERGENCE_FLAGGED', 'CommissionInvoice', invoice.id, { collectorUserId, divergenceBp: d.bp });
     } catch (e) {
       if ((e as { code?: string }).code === 'P2002') continue; // this month was already invoiced for this collector
@@ -366,7 +373,8 @@ export async function chaseCommissionInvoices(now = new Date()) {
         const claimed = await prisma.commissionInvoice.updateMany({ where: { id: inv.id, remindersSent: { equals: inv.remindersSent } }, data: { remindersSent: [...inv.remindersSent, ...r.markSent.filter((d) => !inv.remindersSent.includes(d))] } });
         if (claimed.count > 0) {
           out.reminded++;
-          await safeSms(u?.phoneNumber, r.send === 0 ? `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is due today.` : `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is due in ${r.send} days.`);
+          const message = r.send === 0 ? `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is due today.` : `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is due in ${r.send} days.`;
+          await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ commission invoice reminder', message);
         }
       }
       continue;
@@ -377,11 +385,18 @@ export async function chaseCommissionInvoices(now = new Date()) {
     if (claimed.count === 0) continue;
     out.escalated++;
     await audit(null, 'COMMISSION_ESCALATED', 'CommissionInvoice', inv.id, { level });
-    if (level === 1) await safeSms(u?.phoneNumber, `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is overdue. Please pay it in the app.`);
-    if (level === 2) await safeSms(u?.phoneNumber, `ÀJỌ: your commission invoice is still unpaid, so you cannot start new cycles. Your current cycles and members are not affected.`);
+    if (level === 1) {
+      const message = `ÀJỌ: your commission invoice of ₦${koboToNaira(inv.amountKobo)} is overdue. Please pay it in the app.`;
+      await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ commission invoice overdue', message);
+    }
+    if (level === 2) {
+      const message = 'ÀJỌ: your commission invoice is still unpaid, so you cannot start new cycles. Your current cycles and members are not affected.';
+      await safeSmsAndEmail(u?.phoneNumber, u?.email, 'ÀJỌ commission invoice update', message);
+    }
     if (level === 3) {
       const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
-      for (const a of admins) await safeSms(a.phoneNumber, `ÀJỌ: a collector's commission invoice of ₦${koboToNaira(inv.amountKobo)} is ${cfg.adminReviewAfterDays}+ days overdue. Please review.`);
+      const message = `ÀJỌ: a collector's commission invoice of ₦${koboToNaira(inv.amountKobo)} is ${cfg.adminReviewAfterDays}+ days overdue. Please review.`;
+      for (const a of admins) await safeSmsAndEmail(a.phoneNumber, a.email, 'Overdue commission invoice needs review', message);
     }
   }
   return out;

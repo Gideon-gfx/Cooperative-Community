@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { HttpError } from '../../lib/errors';
 import { assertGroupMember } from '../../lib/access';
 import { audit } from '../../lib/audit';
-import { safeSms } from '../../lib/notify';
+import { safeSmsAndEmail } from '../../lib/notify';
 import { objectId } from '../../lib/validators';
 import { authenticate } from '../../middleware/auth.middleware';
 
@@ -22,7 +22,12 @@ disputesRouter.post('/', async (req, res) => {
   await assertGroupMember(b.groupId, req.user!.id);
   const group = await prisma.communityGroup.findUniqueOrThrow({ where: { id: b.groupId }, include: { admin: true } });
   const dispute = await prisma.dispute.create({ data: { ...b, raisedById: req.user!.id } });
-  await safeSms(group.admin.phoneNumber, `A member raised a dispute in "${group.name}": ${b.kind.replace(/_/g, ' ').toLowerCase()}. Please review it in ÀJỌ app.`);
+  await safeSmsAndEmail(
+    group.admin.phoneNumber,
+    group.admin.email,
+    `Dispute raised in ${group.name}`,
+    `A member raised a dispute in "${group.name}": ${b.kind.replace(/_/g, ' ').toLowerCase()}. Please review it in ÀJỌ app.`,
+  );
   await audit(req.user!.id, 'DISPUTE_RAISED', 'Dispute', dispute.id, { kind: b.kind });
   res.status(201).json({ dispute });
 });
@@ -52,7 +57,7 @@ disputesRouter.post('/:id/escalate', async (req, res) => {
   if (d.status === 'RESOLVED') throw new HttpError(409, 'Already resolved');
   const updated = await prisma.dispute.update({ where: { id: d.id }, data: { status: 'ESCALATED' } });
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
-  for (const a of admins) await safeSms(a.phoneNumber, 'ÀJỌ: a dispute was escalated and needs review.');
+  for (const a of admins) await safeSmsAndEmail(a.phoneNumber, a.email, 'ÀJỌ dispute escalated', 'ÀJỌ: a dispute was escalated and needs review.');
   await audit(req.user!.id, 'DISPUTE_ESCALATED', 'Dispute', d.id);
   res.json({ dispute: updated });
 });
@@ -70,7 +75,7 @@ disputesRouter.patch('/:id/resolve', async (req, res) => {
   // A disputed payout goes back to the recipient to confirm again.
   if (d.scheduleId) await prisma.ajoRotationSchedule.updateMany({ where: { id: d.scheduleId, status: 'DISPUTED' }, data: { status: 'COMPLETED', recipientConfirmedAt: null } });
   const raiser = await prisma.user.findUnique({ where: { id: d.raisedById } });
-  await safeSms(raiser?.phoneNumber, `Your ÀJỌ dispute was resolved: ${resolution}`);
+  await safeSmsAndEmail(raiser?.phoneNumber, raiser?.email, 'Your ÀJỌ dispute was resolved', `Your ÀJỌ dispute was resolved: ${resolution}`);
   await audit(req.user!.id, 'DISPUTE_RESOLVED', 'Dispute', d.id);
   res.json({ dispute: updated });
 });

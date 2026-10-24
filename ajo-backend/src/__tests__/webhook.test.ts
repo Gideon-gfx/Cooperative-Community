@@ -7,7 +7,7 @@ const mockPrisma: Record<string, any> = {
 const recordCollected = jest.fn();
 const finalizeDisbursement = jest.fn();
 jest.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
-jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), naira: (n: unknown) => `₦${n}` }));
+jest.mock('../lib/notify', () => ({ safeSms: jest.fn(), safeSmsAndEmail: jest.fn(), naira: (n: unknown) => `₦${n}` }));
 jest.mock('../modules/payments/monnify-escrow.provider', () => ({
   MonnifyEscrowProvider: jest.fn().mockImplementation(() => ({ recordCollected, finalizeDisbursement })),
 }));
