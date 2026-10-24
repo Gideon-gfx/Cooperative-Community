@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Linking, Platform, Text } from 'react-native';
+import { Linking, Platform, Text, View } from 'react-native';
 import { Alert } from '../components/feedback';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
@@ -7,15 +7,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, errMsg } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { LANGS, type Lang } from '../i18n';
-import { Button, Card, Screen, s } from '../components/ui';
+import { Button, Card, Screen, Sheet, s } from '../components/ui';
 import { LegalLinks } from '../components/LegalLinks';
 import { Chips, Field, TrustBadge, type Trust } from '../components/widgets';
 import { registerIosPushNotifications } from '../notifications/push';
+import { useLoader } from '../components/GlobalLoader';
+import { colors } from '../theme';
 
 const HOURS = [6, 8, 10, 12, 16, 18, 20].map((h) => ({ value: String(h), label: `${h}:00` }));
 
 export default function Settings() {
   const { user, updateUser, logout, t } = useAuth();
+  const withLoader = useLoader();
   const router = useRouter();
   const qc = useQueryClient();
   const { mustChange } = useLocalSearchParams<{ mustChange?: string }>();
@@ -23,6 +26,8 @@ export default function Settings() {
   const [currentPin, setCurrentPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [notificationsBusy, setNotificationsBusy] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const profile = useQuery({ queryKey: ['profile'], queryFn: async () => (await api.get<{ user: { hasPin: boolean }; trust: Trust; collector: { verified: boolean; groups: number; completedPayouts: number; confirmedPayouts: number } | null }>('/auth/profile')).data });
 
   const patch = async (body: Record<string, unknown>) => {
@@ -62,6 +67,21 @@ export default function Settings() {
       Alert.alert('Could not enable notifications', error instanceof Error ? error.message : errMsg(error));
     } finally {
       setNotificationsBusy(false);
+    }
+  };
+
+  const confirmAndLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await withLoader(async () => {
+        await logout();
+        router.replace('/');
+      });
+    } catch (error) {
+      Alert.alert('Could not log out', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLoggingOut(false);
+      setConfirmLogout(false);
     }
   };
 
@@ -110,7 +130,17 @@ export default function Settings() {
         </Card>
       )}
 
-      <Button title={t('logout')} variant="danger" onPress={async () => { await logout(); router.replace('/'); }} />
+      <Button title={t('logout')} variant="danger" onPress={() => setConfirmLogout(true)} />
+      <Sheet title={t('logout')} visible={confirmLogout} onClose={() => { if (!loggingOut) setConfirmLogout(false); }}>
+        <Card style={{ borderColor: colors.border }}>
+          <Text style={s.h3}>Are you sure you want to log out?</Text>
+          <Text style={s.muted}>You will need to log in again to access your account.</Text>
+          <View style={{ gap: 8, marginTop: 8 }}>
+            <Button title={t('logout')} variant="danger" onPress={confirmAndLogout} loading={loggingOut} />
+            <Button title="Cancel" variant="outline" onPress={() => setConfirmLogout(false)} disabled={loggingOut} />
+          </View>
+        </Card>
+      </Sheet>
       <LegalLinks />
     </Screen>
   );

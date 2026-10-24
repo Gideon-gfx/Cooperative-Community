@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import { colors, fonts, TAP } from '../theme';
 import { useLoader } from './GlobalLoader';
 export { DotsLoader } from './DotsLoader';
@@ -66,11 +67,30 @@ export function ProgressBar({ value, max, color = colors.orange }: { value: numb
   return <View style={s.track}><View style={{ width: `${pct}%`, height: '100%', backgroundColor: color }} /></View>;
 }
 
-export function Screen({ children, scroll = true, padded = true, loaderButtons = false, keyboardAvoiding = false }: { children: ReactNode; scroll?: boolean; padded?: boolean; loaderButtons?: boolean; keyboardAvoiding?: boolean }) {
+export function Screen({ children, scroll = true, padded = true, loaderButtons = false, keyboardAvoiding = false, refreshable = true }: { children: ReactNode; scroll?: boolean; padded?: boolean; loaderButtons?: boolean; keyboardAvoiding?: boolean; refreshable?: boolean }) {
   const inner = padded ? { padding: 16, gap: 14 } : undefined;
   const [locked, setLocked] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const queryClient = useQueryClient();
+  const withLoader = useLoader();
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await withLoader(() => queryClient.invalidateQueries({ type: 'active' }));
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const content = scroll
-    ? <ScrollView contentContainerStyle={[inner, keyboardAvoiding ? { flexGrow: 1 } : undefined]} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollEnabled={!locked}>{children}</ScrollView>
+    ? <ScrollView
+        contentContainerStyle={[inner, keyboardAvoiding ? { flexGrow: 1 } : undefined]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        scrollEnabled={!locked}
+        refreshControl={refreshable ? <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.primary} colors={[colors.primary]} /> : undefined}
+      >
+        {children}
+      </ScrollView>
     : <View style={[{ flex: 1 }, inner]}>{children}</View>;
   return (
     <ScrollLockContext.Provider value={setLocked}>
